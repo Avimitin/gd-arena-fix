@@ -14,9 +14,8 @@ changes in memory; the original game DLL stays intact.
 
 ## Download and install
 
-1. Open [Build distribution](https://github.com/Avimitin/gd-arena-fix/actions/workflows/build.yml),
-   select the latest successful run on `main`, and download the artifact ending
-   in **`-binary.zip`**. Sign in to GitHub to download artifacts.
+1. Open the [latest release](https://github.com/Avimitin/gd-arena-fix/releases/latest)
+   and download the asset ending in **`-binary.zip`**.
 2. Extract `gd-arena-fix.dll` and `gd-arena-fix.ini` into your game's
    `contents\modules` directory, keeping both files together.
 3. Append this argument to your existing spice2x launch command, keeping your
