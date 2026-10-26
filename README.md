@@ -22,7 +22,7 @@ changes in memory; the original game DLL stays intact.
    other arguments and DLL hooks:
 
    ```bat
-   -k ".\modules\gd-arena-fix.dll"
+   -k gd-arena-fix.dll
    ```
 
 4. Edit the INI as described below, then start the game using your usual script.
