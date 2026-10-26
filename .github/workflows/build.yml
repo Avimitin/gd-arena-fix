@@ -1,0 +1,66 @@
+name: Build distribution
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Build DLL and test executable
+        shell: cmd
+        run: call build.cmd
+
+      # This check needs neither the game nor a hardware graphics adapter.
+      # Full D3D/game-image tests are run locally on the target machine.
+      - name: Check packaged default configuration
+        shell: cmd
+        run: dist\gd-mod-test.exe --check-config 60 0
+
+      - name: Package and verify distribution ZIPs
+        run: python package.py --output-dir artifacts
+
+      - name: Upload binary ZIP
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: artifacts/gd-display-mod-*-binary.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload source ZIP
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: artifacts/gd-display-mod-*-source.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload ZIP checksums
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: artifacts/SHA256SUMS.txt
+          archive: false
+          if-no-files-found: error
+          retention-days: 30

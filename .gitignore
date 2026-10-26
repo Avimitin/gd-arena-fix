@@ -1,0 +1,47 @@
+# Generated build and distribution files (keep third_party source projects).
+/build/
+/dist/
+/artifacts/
+/SHA256SUMS.txt
+*.zip
+*.obj
+*.o
+*.dll
+*.exe
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.pch
+*.ipch
+
+# Runtime logs, captures, and machine-local settings.
+*.log
+*.dmp
+diagnostic-test.bmp
+notes-*.bmp
+*.local.ini
+
+# Local reverse-engineering data; the checked-in INI is the public default.
+/.research/
+/evidence/
+*.i64
+*.idb
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+
+# Editor, Python, and OS state.
+.vs/
+.vscode/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+Thumbs.db
