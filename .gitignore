@@ -16,6 +16,7 @@
 *.ipch
 
 # Runtime logs, captures, and machine-local settings.
+.github-token.txt
 *.log
 *.dmp
 diagnostic-test.bmp
