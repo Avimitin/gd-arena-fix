@@ -21,7 +21,7 @@ void log(const char* format, ...) {
     wchar_t path[MAX_PATH];
     GetModuleFileNameW(self, path, MAX_PATH);
     if (auto slash = wcsrchr(path, L'\\')) slash[1] = 0;
-    wcscat_s(path, L"gd-display-mod.log");
+    wcscat_s(path, L"gd-arena-fix.log");
     FILE* file = nullptr;
     _wfopen_s(&file, path, L"a");
     if (file) { fprintf(file, "[%.6f] %s\n", seconds(), text); fclose(file); }

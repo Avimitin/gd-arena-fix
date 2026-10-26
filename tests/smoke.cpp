@@ -27,7 +27,7 @@ static void check_input_extent(HWND window, bool windowed = false) {
     check(input_x == 799 && input_y >= 1278, "physical right/bottom reach full game input range");
 }
 static void fullscreen_window_test() {
-    HWND window = CreateWindowExW(0, L"STATIC", L"gd-mod hidden fullscreen geometry test", WS_POPUP,
+    HWND window = CreateWindowExW(0, L"STATIC", L"gd-arena-fix hidden fullscreen geometry test", WS_POPUP,
         0, 0, 3840, 2160, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     check(window != nullptr, "hidden fullscreen-style window");
     RECT before{}; GetClientRect(window, &before);
@@ -216,15 +216,15 @@ int wmain(int argc, wchar_t** argv) {
         if ((argc == 3 || argc == 4) && wcscmp(argv[1], L"--check-config") == 0) {
             wchar_t path[MAX_PATH]; GetModuleFileNameW(nullptr, path, MAX_PATH);
             if (auto slash = wcsrchr(path, L'\\')) slash[1] = 0;
-            wcscat_s(path, L"gd-display-mod.ini");
+            wcscat_s(path, L"gd-arena-fix.ini");
             auto selected = gd::read_config(path);
             const auto expected = wcstoul(argv[2], nullptr, 10);
             printf("Native config: %ux%u @ %u; target FPS %u; experimental=%d; DisableLive2D=%d\n",
                 selected.width, selected.height, selected.refresh, selected.fps, selected.experimental, selected.disable_live2d);
             check(selected.refresh == expected && selected.fps == expected && selected.experimental == (expected == 120),
-                "launcher requested mode reaches native config reader");
+                "requested mode reaches native config reader");
             if (argc == 4) check(selected.disable_live2d == (wcstoul(argv[3], nullptr, 10) != 0), "INI Live2D preference reaches native reader");
-            puts("PASS: launcher/native configuration handoff");
+            puts("PASS: native INI configuration");
             return 0;
         }
         if (argc >= 3 && wcscmp(argv[1], L"--verify-image") == 0)
@@ -249,7 +249,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         printf("Native adapter 0 enumerates 1920x1080@120: %s\n", supports120 ? "YES" : "NO");
         gd::wrap_factory(factory);
-        HWND window = CreateWindowExW(0, L"STATIC", L"gd-mod hidden smoke test", WS_OVERLAPPEDWINDOW,
+        HWND window = CreateWindowExW(0, L"STATIC", L"gd-arena-fix hidden smoke test", WS_OVERLAPPEDWINDOW,
             0, 0, 640, 480, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         check(window != nullptr, "hidden test window");
         D3DPRESENT_PARAMETERS pp{};

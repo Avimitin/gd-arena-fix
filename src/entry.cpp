@@ -18,7 +18,7 @@ void initialize() {
     wcscat_s(ini, L".ini");
     config = read_config(ini);
     log("Config file: %ls", ini);
-    log("gd-display-mod prototype 0.1.4: %ux%u @ %u; target FPS %u; experimental=%d",
+    log("gd-arena-fix prototype 0.1.4: %ux%u @ %u; target FPS %u; experimental=%d",
         config.width, config.height, config.refresh, config.fps, config.experimental);
     if (config.width != 1920 || config.height != 1080 || (config.refresh != 60 && config.refresh != 120) ||
         (config.fps != 60 && config.fps != 120) || (config.fps == 120 && (!config.experimental || config.refresh != 120)))
@@ -47,7 +47,7 @@ static HRESULT WINAPI create9ex(UINT version, IDirect3D9Ex** output) {
 bool bootstrap(HMODULE module) {
     self = module;
     game = GetModuleHandleW(L"gdxg.dll");
-    if (!game) { OutputDebugStringA("gd-display-mod: gdxg.dll is not loaded; use -k, not -z.\n"); return true; }
+    if (!game) { OutputDebugStringA("gd-arena-fix: gdxg.dll is not loaded; use -k, not -z.\n"); return true; }
     create_slot = import_slot(game, "Direct3DCreate9Ex");
     if (!create_slot) return true;
     original_create = reinterpret_cast<Create9Ex>(*create_slot);
