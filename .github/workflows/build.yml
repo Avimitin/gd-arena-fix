@@ -43,21 +43,13 @@ jobs:
       - name: Run CTest checks
         run: ctest --preset windows-release
 
-      - name: Package and verify distribution ZIPs
+      - name: Package and verify distribution ZIP
         run: cmake --build --preset windows-release --target dist-zip
 
       - name: Upload binary ZIP
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           path: artifacts/gd-arena-fix-*-binary.zip
-          archive: false
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload source ZIP
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          path: artifacts/gd-arena-fix-*-source.zip
           archive: false
           if-no-files-found: error
           retention-days: 30
@@ -77,5 +69,4 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             artifacts/gd-arena-fix-*-binary.zip
-            artifacts/gd-arena-fix-*-source.zip
             artifacts/SHA256SUMS.txt

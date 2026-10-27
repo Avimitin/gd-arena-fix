@@ -59,9 +59,8 @@ so a developer's active `dist` settings cannot change the shipped defaults.
 The packager checks embedded license text, archive integrity, the exact
 binary file list, and the archived payload hashes.
 
-The source ZIP includes code, tests, build scripts, documentation, the
-workflow, and dependency notices. `SHA256SUMS.txt` is a separate file listing
-the hashes of both ZIPs. The package version is set in `package.py`.
+GitHub provides source downloads automatically. `SHA256SUMS.txt` lists the
+binary ZIP hash. The package version is set in `package.py`.
 Omit `--output-dir` to place these outputs in the source directory.
 
 ## Game build profiles

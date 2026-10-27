@@ -1,4 +1,4 @@
-"""Package the two-file user distribution and the redistributable source."""
+"""Package the two-file user distribution."""
 from pathlib import Path
 import argparse
 import hashlib
@@ -32,35 +32,15 @@ with zipfile.ZipFile(binary_archive, "w", zipfile.ZIP_DEFLATED) as archive:
     for name, path in payload.items():
         archive.write(path, name)
 
-source_files = [root / name for name in (
-    "README.md", "LICENSE", "build.cmd", "package.py", f"{NAME}.ini",
-    "CMakeLists.txt", "CMakePresets.json", ".clang-format", "requirements-dev.txt",
-    ".gitignore", ".gitattributes", ".github/workflows/build.yml")]
-for directory in ("src", "tests", "tools", "third_party/minhook/src", "third_party/minhook/include"):
-    source_files += [path for path in (root / directory).rglob("*")
-                    if path.is_file() and path.suffix in {".c", ".cpp", ".h", ".py", ".rc", ".asm"}
-                    and not any(part.startswith(".") for part in path.relative_to(root).parts)]
-source_files += [root / "third_party/minhook" / name for name in ("LICENSE.txt", "README.md")]
-source_files += sorted((root / "docs").rglob("*.md"))
-source_archive = output / f"{NAME}-{VERSION}-source.zip"
-with zipfile.ZipFile(source_archive, "w", zipfile.ZIP_DEFLATED) as archive:
-    for path in sorted(source_files):
-        archive.write(path, NAME + "/" + path.relative_to(root).as_posix())
-
-checksums = []
-for path in (binary_archive, source_archive):
-    with zipfile.ZipFile(path) as archive:
-        if archive.testzip() is not None:
-            raise RuntimeError(f"ZIP integrity check failed: {path.name}")
-        if any(Path(name).name.lower() == "gdxg.dll" for name in archive.namelist()):
-            raise RuntimeError("Game DLL must not be distributed")
-        if path == binary_archive:
-            if len(archive.namelist()) != 2 or set(archive.namelist()) != set(payload):
-                raise RuntimeError("Binary ZIP must contain only the DLL and INI")
-            for name, expected in expected_hashes.items():
-                if hashlib.sha256(archive.read(name)).hexdigest() != expected:
-                    raise RuntimeError(f"Packaged checksum mismatch: {name}")
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    checksums.append(f"{digest}  {path.name}\n")
-    print(f"{path.name}: {path.stat().st_size:,} bytes, SHA256 {digest}")
-(output / "SHA256SUMS.txt").write_text("".join(checksums), encoding="utf-8")
+with zipfile.ZipFile(binary_archive) as archive:
+    if archive.testzip() is not None:
+        raise RuntimeError(f"ZIP integrity check failed: {binary_archive.name}")
+    if len(archive.namelist()) != 2 or set(archive.namelist()) != set(payload):
+        raise RuntimeError("Binary ZIP must contain only the DLL and INI")
+    for name, expected in expected_hashes.items():
+        if hashlib.sha256(archive.read(name)).hexdigest() != expected:
+            raise RuntimeError(f"Packaged checksum mismatch: {name}")
+digest = hashlib.sha256(binary_archive.read_bytes()).hexdigest()
+print(f"{binary_archive.name}: {binary_archive.stat().st_size:,} bytes, SHA256 {digest}")
+(output / "SHA256SUMS.txt").write_text(
+    f"{digest}  {binary_archive.name}\n", encoding="utf-8")
