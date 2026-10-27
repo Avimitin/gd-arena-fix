@@ -13,4 +13,4 @@ inline DiagnosticHook bind_hook(const target::Site& site, void* replacement, voi
 }
 std::vector<DiagnosticHook> note_diagnostic_hooks();
 void report_note_diagnostics(double elapsed);
-}
+} // namespace gd

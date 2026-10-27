@@ -2,16 +2,29 @@
 
 ## Build
 
-Install Visual Studio 2022 with the x64 C++ tools and a Windows SDK, then run
-`build.cmd` from the checkout. MinHook is vendored; a normal clone contains
-all required source. No game files are needed to build the mod.
+Install Visual Studio 2022 with the x64 C++ tools, a Windows SDK, and Python
+3.10 or newer. MinHook is vendored; no game files are needed to build.
+
+From an **x64 Native Tools Command Prompt**, install the developer tools and run:
+
+```bat
+python -m pip install -r requirements-dev.txt
+cmake --preset windows-release
+cmake --build --preset windows-release
+ctest --preset windows-release
+```
+
+The preset uses Ninja, C++20, a static MSVC runtime, and an optimized build with
+debug symbols. `build.cmd` is a convenience wrapper that sets up the x64 compiler
+environment and invokes the same CMake preset. For IDE or local overrides, use
+an ignored `CMakeUserPresets.json`.
 
 The build produces `dist/gd-arena-fix.dll`, its default INI, a PDB, and
 `dist/gd-arena-fix-test.exe`. The test executable is a development tool and
 is excluded from the binary distribution.
 
 For a portable SDK installation, set these environment variables before
-running the build:
+running `build.cmd`:
 
 ```text
 GD_SDK_HEADERS=<Microsoft.Windows.SDK.CPP>/c/Include/<SDK version>
@@ -23,16 +36,25 @@ GD_SDK_BIN=<Microsoft.Windows.SDK.CPP>/c/bin/<SDK version>/x64
 project license and the complete MinHook/HDE notices as `GD_LICENSE` and
 `MINHOOK_LICENSE` RCDATA resources in the DLL.
 
+## Formatting
+
+The developer requirements pin clang-format so local and CI output agree.
+Run `python tools/format.py` to format project C++ or add `--check` to check it
+without changes. CMake exposes the same commands as `format` and `format-check`
+targets. Vendored MinHook and assembly are excluded; include order is preserved.
+
 ## Packaging
 
 With Python 3.10 or newer, run:
 
 ```powershell
-py -3 package.py --output-dir artifacts
+cmake --build --preset windows-release --target dist-zip
 ```
 
-The binary ZIP contains exactly two files at its root: `gd-arena-fix.dll`
-and `gd-arena-fix.ini`. Packaging always takes the INI from the source root,
+Alternatively, run `python package.py --output-dir artifacts`; `--dist-dir`
+selects a custom CMake output directory. The binary ZIP contains exactly two
+files at its root: `gd-arena-fix.dll` and `gd-arena-fix.ini`.
+Packaging always takes the INI from the source root,
 so a developer's active `dist` settings cannot change the shipped defaults.
 The packager checks embedded license text, archive integrity, the exact
 binary file list, and the archived payload hashes.
@@ -68,7 +90,7 @@ coverage, remaining paths and the reproducible scanner.
 ## GitHub Actions
 
 `.github/workflows/build.yml` runs only on tag pushes using `windows-2022`.
-It builds the DLL and test executable, checks the default INI, packages both
+It checks formatting, builds with CMake, runs CTest, packages both
 ZIPs, and uploads the ZIPs and checksums as separate artifacts with 30-day
 retention. After all checks pass, it also uploads both ZIPs and
 `SHA256SUMS.txt` to the pushed tag's GitHub Release, creating the release if
@@ -144,7 +166,19 @@ filter using synthetic state. The timed-play wrapper uses a substitute callback
 for its unrelated frame work. Run at 120/144/240 with animation modes 0/1/2 after
 clock changes. See [Timing](timing.md) for exact coverage and hardware limits.
 
-## Note diagnostics
+## Diagnostics
+
+Above 60 FPS, song-list and category readiness use each asset's `[loop, move)` label interval
+instead of requiring a poll at one exact frame. AFP executes intermediate
+actions during catch-up, but C++ sees only the final position; missing the
+`loop` frame otherwise leaves a queued scroll permanently busy. Label lookup
+needs no new timer or frame-number exception. Intro/closing phases, native
+scroll motion and the other readiness ranges retain their existing behavior.
+
+`Diagnostics=1` also logs shared song-list state and accepted/rejected scroll
+requests at most once per second after scrolling input. These passive probes
+help investigate stalls affecting both the main list and touchscreen grid.
+They do not reset locks or change scrolling behavior.
 
 `Diagnostics=1` adds three observation-only hooks to the GuitarFreaks note
 path. Every five seconds they report note-batch cadence, repeated/changed

@@ -49,7 +49,6 @@ Width=1920
 Height=1080
 Refresh=120
 FPS=120
-Experimental=1
 DisableLive2D=0
 AnimationTiming=2
 Diagnostics=0
@@ -61,17 +60,15 @@ Diagnostics=0
 | `Height` | `1080` | Main-screen output height. Only `1080` is supported. |
 | `Refresh` | `120` | Requested fullscreen refresh rate in Hz, such as `60`, `120`, `144` or `240`. Requires display support. |
 | `FPS` | `120` | Target frame rate, at least `60`. Use the same value as `Refresh`; actual performance depends on the hardware and spice2x settings. |
-| `Experimental` | `1` | Set to `1` for any frame rate above `60`. Timing and visual issues may still occur. |
 | `DisableLive2D` | `0` | `1` disables the optional left/right cabinet characters in menus and normal gameplay. `0` follows the game's settings. Saved selections are preserved; special scene characters and cut-ins can still appear. |
 | `AnimationTiming` | `2` | Above 60 FPS: `0` leaves native animation speed unchanged; `1` corrects supported animation and sprite-effect speed; `2` also smooths supported movement and fades. Sprite artwork retains its original frame count. |
-| `Diagnostics` | `0` | `1` enables extra GuitarFreaks note logging and **Ctrl+Shift+F8** screenshots while the game is focused. Captures are saved beside the DLL and may briefly pause rendering. Leave at `0` for normal play. |
+| `Diagnostics` | `0` | `1` enables extra note/selection logging and **Ctrl+Shift+F8** screenshots while the game is focused. Captures are saved beside the DLL and may briefly pause rendering. Leave at `0` for normal play. |
 
 For a 60 Hz display, use:
 
 ```ini
 Refresh=60
 FPS=60
-Experimental=0
 AnimationTiming=0
 ```
 

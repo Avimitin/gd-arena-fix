@@ -18,4 +18,4 @@ inline std::vector<Live2DPatch> live2d_patches() {
         patches.push_back({patch->address, patch->before.copy(), patch->after.copy()});
     return patches;
 }
-}
+} // namespace gd

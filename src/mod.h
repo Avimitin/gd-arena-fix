@@ -11,7 +11,6 @@
 namespace gd {
 struct Config {
     unsigned width = 1920, height = 1080, refresh = 60, fps = 60;
-    bool experimental = false;
     bool diagnostics = false;
     bool disable_live2d = false;
     unsigned animation_timing = 0;
@@ -37,4 +36,4 @@ void install_timing_and_present();
 void initialize();
 void capture_diagnostic_frame();
 bool save_surface_bmp(IDirect3DDevice9Ex* owner, IDirect3DSurface9* surface, const wchar_t* path);
-}
+} // namespace gd

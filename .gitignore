@@ -1,5 +1,7 @@
 # Generated build and distribution files (keep third_party source projects).
 /build/
+/CMakeUserPresets.json
+/compile_commands.json
 /dist/
 /artifacts/
 /SHA256SUMS.txt

@@ -1,6 +1,7 @@
 #include "mod.h"
 #include "timing_math.h"
 #include "note_diagnostics.h"
+#include "selection_diagnostics.h"
 #include "live2d.h"
 #include "animations.h"
 #include "timers.h"
@@ -25,9 +26,17 @@ static SongFilter original_filter;
 static Afp original_afp;
 static thread_local FractionalTicks audio_fraction, filter_fraction;
 static thread_local uint64_t audio_fallback_frame = 0, filter_fallback_frame = 0;
-struct PlaybackSample { uint64_t frame = 0; uint32_t integer = 0; double ticks = 0; bool valid = false; };
+struct PlaybackSample {
+    uint64_t frame = 0;
+    uint32_t integer = 0;
+    double ticks = 0;
+    bool valid = false;
+};
 static thread_local PlaybackSample samples[2];
-struct Capture { bool called = false; int32_t position = 0; };
+struct Capture {
+    bool called = false;
+    int32_t position = 0;
+};
 static thread_local Capture* pending_capture;
 
 void begin_timing_frame(double elapsed) {
@@ -37,31 +46,40 @@ static int64_t __fastcall capture_cursor(int channel) {
     // Capture the main thread's existing poll; do not hook the sound worker or
     // poll the backend a second time. Keep the original sampler's side effects.
     const auto result = reinterpret_cast<int64_t(__fastcall*)(int)>(at(target::get().raw_cursor))(channel);
-    if (pending_capture) *pending_capture = {true, static_cast<int32_t>(result)};
+    if (pending_capture)
+        *pending_capture = {true, static_cast<int32_t>(result)};
     return result;
 }
 
 static int64_t __fastcall present() {
     const double begin = seconds();
     const bool copied = compose();
-    if (config.diagnostics) capture_diagnostic_frame();
+    if (config.diagnostics)
+        capture_diagnostic_frame();
     const double composed = seconds();
     auto result = original_present();
     const double done = seconds();
     static double last = 0, report_start = 0, total_compose = 0, total_present = 0, max_gap = 0;
     static unsigned frames = 0, copies = 0;
-    if (!report_start) report_start = done;
-    if (last) max_gap = std::max(max_gap, done - last);
+    if (!report_start)
+        report_start = done;
+    if (last)
+        max_gap = std::max(max_gap, done - last);
     last = done;
-    ++frames; copies += copied;
-    total_compose += composed - begin; total_present += done - composed;
+    ++frames;
+    copies += copied;
+    total_compose += composed - begin;
+    total_present += done - composed;
     if (done - report_start >= 5.0) {
         log("Present callbacks %.2f Hz; copies %u/%u; max gap %.2f ms; copy avg %.3f ms; Present avg %.3f ms",
-            frames / (done - report_start), copies, frames, max_gap * 1000,
-            total_compose * 1000 / frames, total_present * 1000 / frames);
-        if (config.diagnostics) report_note_diagnostics(done - report_start);
+            frames / (done - report_start), copies, frames, max_gap * 1000, total_compose * 1000 / frames,
+            total_present * 1000 / frames);
+        if (config.diagnostics)
+            report_note_diagnostics(done - report_start);
         report_animations();
-        report_start = done; frames = copies = 0; total_compose = total_present = max_gap = 0;
+        report_start = done;
+        frames = copies = 0;
+        total_compose = total_present = max_gap = 0;
     }
     return result;
 }
@@ -78,13 +96,15 @@ static int64_t __fastcall frame(int64_t window, int64_t state, void* arg3) {
     return result;
 }
 __declspec(noinline) static int64_t __fastcall afp(float dt, int type, unsigned arg) {
-    if (_ReturnAddress() == at(target::get().afp_return)) dt = afp_step(scene_frame().elapsed);
+    if (_ReturnAddress() == at(target::get().afp_return))
+        dt = afp_step(scene_frame().elapsed);
     return original_afp(dt, type, arg);
 }
 static int64_t __fastcall audio(unsigned channel, int index) {
     // The loading/command thread also calls this sampler. It has no render
     // clock and must retain native behavior without sharing capture state.
-    if (!scene_frame().serial) return original_audio(channel, index);
+    if (!scene_frame().serial)
+        return original_audio(channel, index);
     auto fallback = static_cast<uint32_t*>(at(target::get().audio_alternate));
     const uint32_t previous = *fallback;
     Capture captured;
@@ -96,9 +116,10 @@ static int64_t __fastcall audio(unsigned channel, int index) {
         auto& sample = samples[index];
         sample = {};
         if (captured.called && captured.position > 0) {
-            auto format = static_cast<uint8_t*>(at(target::get().audio_format)) + target::layout::audio_format_stride * index;
+            auto format =
+                static_cast<uint8_t*>(at(target::get().audio_format)) + target::layout::audio_format_stride * index;
             const int64_t product = int64_t(*reinterpret_cast<int16_t*>(format + target::layout::audio_bits)) *
-                *reinterpret_cast<int32_t*>(format + target::layout::audio_rate);
+                                    *reinterpret_cast<int32_t*>(format + target::layout::audio_rate);
             if (product >= 4 && product <= INT32_MAX) {
                 const double ticks = (double(captured.position) / (product / 4)) * 300.0;
                 // The native divide-then-multiply can round a half tick a few
@@ -111,23 +132,29 @@ static int64_t __fastcall audio(unsigned channel, int index) {
     }
     // Only the failure fallback writes this global inside the original function.
     if (channel == 2 && *fallback == previous + 5 && uint32_t(result) == *fallback) {
-        const auto ticks = audio_fallback_frame == scene_frame().serial ? 0 : audio_fraction.advance(scene_frame().elapsed);
+        const auto ticks =
+            audio_fallback_frame == scene_frame().serial ? 0 : audio_fraction.advance(scene_frame().elapsed);
         audio_fallback_frame = scene_frame().serial;
         *fallback = previous + ticks;
         return *fallback;
     }
-    if (channel == 2) { audio_fraction.reset(); audio_fallback_frame = 0; }
+    if (channel == 2) {
+        audio_fraction.reset();
+        audio_fallback_frame = 0;
+    }
     return result;
 }
 static int64_t __fastcall song_filter(unsigned char alternate) {
-    if (!scene_frame().serial) return original_filter(alternate);
+    if (!scene_frame().serial)
+        return original_filter(alternate);
     auto source = static_cast<uint32_t*>(at(alternate ? target::get().audio_alternate : target::get().audio_main));
     const auto previous = *static_cast<uint32_t*>(at(target::get().song_previous));
     auto scene = *static_cast<uint32_t**>(at(target::get().scene_pointer));
     // Match only the original source==0 / previous>0 / +5 fallback path.
     // Initialization and alternate-mode seek handling still run untouched.
     if (!alternate && *source == 0 && previous > 0 && scene && scene[target::layout::scene_seek_index] == 0) {
-        const auto ticks = filter_fallback_frame == scene_frame().serial ? 0 : filter_fraction.advance(scene_frame().elapsed);
+        const auto ticks =
+            filter_fallback_frame == scene_frame().serial ? 0 : filter_fraction.advance(scene_frame().elapsed);
         filter_fallback_frame = scene_frame().serial;
         *source = previous + ticks;
         auto result = original_filter(alternate);
@@ -150,26 +177,36 @@ static int64_t __fastcall song_filter(unsigned char alternate) {
     return result;
 }
 
-struct Patch { void* address; std::vector<uint8_t> before, after; };
+struct Patch {
+    void* address;
+    std::vector<uint8_t> before, after;
+};
 static void require_bytes(uintptr_t va, const std::vector<uint8_t>& bytes) {
-    if (memcmp(at(va), bytes.data(), bytes.size()) != 0) throw std::runtime_error("expected game instructions do not match; conflicting patch or different build");
+    if (memcmp(at(va), bytes.data(), bytes.size()) != 0)
+        throw std::runtime_error("expected game instructions do not match; conflicting patch or different build");
 }
 static void* allocate_near(void* target) {
-    SYSTEM_INFO info; GetSystemInfo(&info);
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
     const uintptr_t center = reinterpret_cast<uintptr_t>(target);
     const uintptr_t low = center > 0x70000000 ? center - 0x70000000 : info.dwAllocationGranularity;
     const uintptr_t high = center + 0x70000000;
     for (uintptr_t cursor = low; cursor < high;) {
         MEMORY_BASIC_INFORMATION region{};
-        if (!VirtualQuery(reinterpret_cast<void*>(cursor), &region, sizeof(region))) break;
+        if (!VirtualQuery(reinterpret_cast<void*>(cursor), &region, sizeof(region)))
+            break;
         uintptr_t next = reinterpret_cast<uintptr_t>(region.BaseAddress) + region.RegionSize;
         if (region.State == MEM_FREE) {
-            const uintptr_t aligned = (cursor + info.dwAllocationGranularity - 1) & ~(uintptr_t(info.dwAllocationGranularity) - 1);
+            const uintptr_t aligned =
+                (cursor + info.dwAllocationGranularity - 1) & ~(uintptr_t(info.dwAllocationGranularity) - 1);
             if (aligned + 4096 <= next && aligned < high) {
-                if (void* p = VirtualAlloc(reinterpret_cast<void*>(aligned), 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)) return p;
+                if (void* p =
+                        VirtualAlloc(reinterpret_cast<void*>(aligned), 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE))
+                    return p;
             }
         }
-        if (next <= cursor) break;
+        if (next <= cursor)
+            break;
         cursor = next;
     }
     throw std::runtime_error("cannot allocate audio capture bridge within call range");
@@ -178,53 +215,75 @@ void install_timing_and_present() {
     const auto& profile = target::get();
     const auto cursor_call = profile.cursor_call.signature.copy();
     require_bytes(profile.present.address, profile.present.signature.copy());
-    const auto diagnostics = config.diagnostics ? note_diagnostic_hooks() : std::vector<DiagnosticHook>{};
-    for (const auto& hook : diagnostics) require_bytes(hook.address, hook.signature);
+    const auto diagnostics = [] {
+        if (!config.diagnostics)
+            return std::vector<DiagnosticHook>{};
+        auto hooks = note_diagnostic_hooks();
+        const auto selection = selection_diagnostic_hooks();
+        hooks.insert(hooks.end(), selection.begin(), selection.end());
+        return hooks;
+    }();
+    for (const auto& hook : diagnostics)
+        require_bytes(hook.address, hook.signature);
     const auto characters = config.disable_live2d ? live2d_patches() : std::vector<Live2DPatch>{};
-    for (const auto& patch : characters) require_bytes(patch.address, patch.before);
+    for (const auto& patch : characters)
+        require_bytes(patch.address, patch.before);
     void** afp_slot = nullptr;
     const bool timing = config.fps > 60;
     const auto timers = timing ? timer_hooks() : std::vector<DiagnosticHook>{};
-    for (const auto& hook : timers) require_bytes(hook.address, hook.signature);
+    for (const auto& hook : timers)
+        require_bytes(hook.address, hook.signature);
     const auto scenes = timing ? scene_timing_hooks() : std::vector<DiagnosticHook>{};
     auto inline_hooks = timing ? scene_inline_hooks() : std::vector<InlineHook>{};
     if (timing && config.animation_timing) {
-        const auto sprite_hooks=animation_inline_hooks();
-        inline_hooks.insert(inline_hooks.end(),sprite_hooks.begin(),sprite_hooks.end());
+        const auto sprite_hooks = animation_inline_hooks();
+        inline_hooks.insert(inline_hooks.end(), sprite_hooks.begin(), sprite_hooks.end());
     }
-    for (const auto& hook : inline_hooks) require_bytes(hook.site->address, hook.site->signature.copy());
-    for (const auto& hook : scenes) require_bytes(hook.address, hook.signature);
+    for (const auto& hook : inline_hooks)
+        require_bytes(hook.site->address, hook.site->signature.copy());
+    for (const auto& hook : scenes)
+        require_bytes(hook.address, hook.signature);
     const auto scene_patches = timing ? scene_timing_patches() : std::vector<const target::Patch*>{};
-    for (const auto* patch : scene_patches) require_bytes(patch->address, patch->before.copy());
+    for (const auto* patch : scene_patches)
+        require_bytes(patch->address, patch->before.copy());
     const auto animations = timing && config.animation_timing ? animation_hooks() : std::vector<DiagnosticHook>{};
-    for (const auto& hook : animations) require_bytes(hook.address, hook.signature);
+    for (const auto& hook : animations)
+        require_bytes(hook.address, hook.signature);
     if (timing) {
         for (const auto* site : {&profile.frame, &profile.audio, &profile.song_filter, &profile.cursor_call})
             require_bytes(site->address, site->signature.copy());
         for (const auto* patch : {&profile.frame_wait, &profile.play_decrement})
             require_bytes(patch->address, patch->before.copy());
         afp_slot = import_ordinal(game, "afp-core.dll", target::layout::afp_ordinal); // XCd229cc00000e
-        if (!afp_slot || afp_slot != at(target::get().afp_import)) throw std::runtime_error("AFP ordinal import not found at expected slot");
+        if (!afp_slot || afp_slot != at(target::get().afp_import))
+            throw std::runtime_error("AFP ordinal import not found at expected slot");
         original_afp = reinterpret_cast<Afp>(*afp_slot);
     }
     // Validate the complete transaction, including function detours. Two
     // individually valid signatures must never authorize overlapping writes.
-    std::vector<PatchRange> ranges{{profile.present.address,profile.present.signature.length}};
-    for(const auto* group:{&diagnostics,&timers,&scenes,&animations})
-        for(const auto& hook:*group)ranges.push_back({hook.address,hook.signature.size()});
-    for(const auto& hook:inline_hooks)ranges.push_back({hook.site->address,hook.site->signature.length});
-    for(const auto& patch:characters)ranges.push_back({patch.address,patch.before.size()});
-    for(const auto* patch:scene_patches)ranges.push_back({patch->address,patch->before.length});
-    if(timing) {
-        for(const auto* site:{&profile.frame,&profile.audio,&profile.song_filter,&profile.cursor_call})
-            ranges.push_back({site->address,site->signature.length});
-        for(const auto* patch:{&profile.frame_wait,&profile.play_decrement})ranges.push_back({patch->address,patch->before.length});
-        ranges.push_back({profile.afp_import,sizeof(void*)});
+    std::vector<PatchRange> ranges{{profile.present.address, profile.present.signature.length}};
+    for (const auto* group : {&diagnostics, &timers, &scenes, &animations})
+        for (const auto& hook : *group)
+            ranges.push_back({hook.address, hook.signature.size()});
+    for (const auto& hook : inline_hooks)
+        ranges.push_back({hook.site->address, hook.site->signature.length});
+    for (const auto& patch : characters)
+        ranges.push_back({patch.address, patch.before.size()});
+    for (const auto* patch : scene_patches)
+        ranges.push_back({patch->address, patch->before.length});
+    if (timing) {
+        for (const auto* site : {&profile.frame, &profile.audio, &profile.song_filter, &profile.cursor_call})
+            ranges.push_back({site->address, site->signature.length});
+        for (const auto* patch : {&profile.frame_wait, &profile.play_decrement})
+            ranges.push_back({patch->address, patch->before.length});
+        ranges.push_back({profile.afp_import, sizeof(void*)});
     }
     require_disjoint_patches(std::move(ranges));
     std::vector<Patch> patches;
-    for (const auto& patch : characters) patches.push_back({at(patch.address), patch.before, patch.after});
-    for (const auto* patch : scene_patches) patches.push_back({at(patch->address), patch->before.copy(), patch->after.copy()});
+    for (const auto& patch : characters)
+        patches.push_back({at(patch.address), patch.before, patch.after});
+    for (const auto* patch : scene_patches)
+        patches.push_back({at(patch->address), patch->before.copy(), patch->after.copy()});
     std::vector<InlineBridge> inline_bridges;
     inline_bridges.reserve(inline_hooks.size());
     for (const auto& hook : inline_hooks) {
@@ -242,34 +301,45 @@ void install_timing_and_present() {
         memcpy(import.after.data(), &hook, sizeof(void*));
         patches.push_back(std::move(import));
     }
-    if (MH_Initialize() != MH_OK) throw std::runtime_error("MinHook initialization failed");
+    if (MH_Initialize() != MH_OK)
+        throw std::runtime_error("MinHook initialization failed");
     std::vector<void*> hooks;
     size_t applied = 0;
     auto add = [&](uintptr_t va, void* replacement, void** original) {
         void* target = at(va);
-        if (MH_CreateHook(target, replacement, original) != MH_OK) throw std::runtime_error("MinHook cannot relocate a target function");
+        if (MH_CreateHook(target, replacement, original) != MH_OK)
+            throw std::runtime_error("MinHook cannot relocate a target function");
         hooks.push_back(target);
     };
     try {
-        add(target::get().present.address, reinterpret_cast<void*>(present), reinterpret_cast<void**>(&original_present));
-        for (const auto& hook : diagnostics) add(hook.address, hook.replacement, hook.original);
-        for (const auto& hook : animations) add(hook.address, hook.replacement, hook.original);
-        for (const auto& hook : timers) add(hook.address, hook.replacement, hook.original);
-        for (const auto& hook : scenes) add(hook.address, hook.replacement, hook.original);
+        add(target::get().present.address, reinterpret_cast<void*>(present),
+            reinterpret_cast<void**>(&original_present));
+        for (const auto& hook : diagnostics)
+            add(hook.address, hook.replacement, hook.original);
+        for (const auto& hook : animations)
+            add(hook.address, hook.replacement, hook.original);
+        for (const auto& hook : timers)
+            add(hook.address, hook.replacement, hook.original);
+        for (const auto& hook : scenes)
+            add(hook.address, hook.replacement, hook.original);
         if (timing) {
             add(target::get().frame.address, reinterpret_cast<void*>(frame), reinterpret_cast<void**>(&original_frame));
             add(target::get().audio.address, reinterpret_cast<void*>(audio), reinterpret_cast<void**>(&original_audio));
-            add(target::get().song_filter.address, reinterpret_cast<void*>(song_filter), reinterpret_cast<void**>(&original_filter));
+            add(target::get().song_filter.address, reinterpret_cast<void*>(song_filter),
+                reinterpret_cast<void**>(&original_filter));
             cursor_bridge = allocate_near(at(target::get().cursor_call.address));
-            uint8_t jump[14]{0xff,0x25,0,0,0,0};
+            uint8_t jump[14]{0xff, 0x25, 0, 0, 0, 0};
             auto capture = &capture_cursor;
             memcpy(jump + 6, &capture, sizeof(capture));
             memcpy(cursor_bridge, jump, sizeof(jump));
             DWORD old;
-            if (!VirtualProtect(cursor_bridge, 4096, PAGE_EXECUTE_READ, &old)) throw std::runtime_error("cannot protect audio bridge");
+            if (!VirtualProtect(cursor_bridge, 4096, PAGE_EXECUTE_READ, &old))
+                throw std::runtime_error("cannot protect audio bridge");
             FlushInstructionCache(GetCurrentProcess(), cursor_bridge, sizeof(jump));
-            const auto displacement = reinterpret_cast<intptr_t>(cursor_bridge) - (reinterpret_cast<intptr_t>(at(target::get().cursor_call.address)) + 5);
-            if (displacement < INT32_MIN || displacement > INT32_MAX) throw std::runtime_error("audio bridge out of call range");
+            const auto displacement = reinterpret_cast<intptr_t>(cursor_bridge) -
+                                      (reinterpret_cast<intptr_t>(at(target::get().cursor_call.address)) + 5);
+            if (displacement < INT32_MIN || displacement > INT32_MAX)
+                throw std::runtime_error("audio bridge out of call range");
             auto after = cursor_call;
             int32_t rel = static_cast<int32_t>(displacement);
             memcpy(after.data() + 1, &rel, sizeof(rel));
@@ -277,24 +347,49 @@ void install_timing_and_present() {
         }
         for (auto& patch : patches) {
             ++applied;
-            if (!write_memory(patch.address, patch.after.data(), patch.after.size())) throw std::runtime_error("memory patch failed");
+            if (!write_memory(patch.address, patch.after.data(), patch.after.size()))
+                throw std::runtime_error("memory patch failed");
         }
-        for (void* hook : hooks) if (MH_QueueEnableHook(hook) != MH_OK) throw std::runtime_error("hook queue failed");
-        if (MH_ApplyQueued() != MH_OK) throw std::runtime_error("hook activation failed");
+        for (void* hook : hooks)
+            if (MH_QueueEnableHook(hook) != MH_OK)
+                throw std::runtime_error("hook queue failed");
+        if (MH_ApplyQueued() != MH_OK)
+            throw std::runtime_error("hook activation failed");
     } catch (...) {
-        for (void* hook : hooks) { MH_DisableHook(hook); MH_RemoveHook(hook); }
-        while (applied) { auto& patch = patches[--applied]; write_memory(patch.address, patch.before.data(), patch.before.size()); }
-        if (cursor_bridge) VirtualFree(cursor_bridge, 0, MEM_RELEASE);
+        for (void* hook : hooks) {
+            MH_DisableHook(hook);
+            MH_RemoveHook(hook);
+        }
+        while (applied) {
+            auto& patch = patches[--applied];
+            write_memory(patch.address, patch.before.data(), patch.before.size());
+        }
+        if (cursor_bridge)
+            VirtualFree(cursor_bridge, 0, MEM_RELEASE);
         MH_Uninitialize();
         throw;
     }
-    for (auto& bridge : inline_bridges) (void)bridge.memory.release(); // Pinned for process lifetime.
-    log("Timing mode: %s", timing ? "EXPERIMENTAL: elapsed-time menu/play timers, audio-anchored song clock, measured AFP delta; no fixed-FPS filter" : "original 60 Hz logic retained");
-    log("AnimationTiming=%u: %s", config.animation_timing, !timing || !config.animation_timing ? "animation hooks disabled" :
-        config.animation_timing == 2 ? "60 Hz native/effect clocks with render interpolation (experimental)" : "60 Hz native/effect clocks (experimental)");
+    for (auto& bridge : inline_bridges)
+        (void)bridge.memory.release(); // Pinned for process lifetime.
+    log("Timing mode: %s",
+        timing ? "elapsed-time menu/play timers, audio-anchored song clock, measured AFP delta; no fixed-FPS filter"
+               : "original 60 Hz logic retained");
+    if (timing)
+        log("Song selection: readiness follows AFP label interval [%s, %s); native scroll motion retained.",
+            profile.selection_idle_label, profile.selection_move_label);
+    log("AnimationTiming=%u: %s", config.animation_timing,
+        !timing || !config.animation_timing ? "animation hooks disabled"
+        : config.animation_timing == 2      ? "60 Hz native/effect clocks with render interpolation (experimental)"
+                                            : "60 Hz native/effect clocks (experimental)");
     log("DisableLive2D=%d: %s", config.disable_live2d,
-        config.disable_live2d ? "left/right cabinet character creation disabled (3 guarded sites); saved selections retained"
-                             : "original character behavior retained");
-    if (config.diagnostics) log("Note diagnostics enabled (observation only). Ctrl+Shift+F8 saves main 4K/1080p BMPs beside the DLL; capture may briefly stall rendering.");
+        config.disable_live2d
+            ? "left/right cabinet character creation disabled (3 guarded sites); saved selections retained"
+            : "original character behavior retained");
+    if (config.diagnostics)
+        log("Note diagnostics enabled (observation only). Ctrl+Shift+F8 saves main 4K/1080p BMPs beside the DLL; "
+            "capture may briefly stall rendering.");
+    if (config.diagnostics)
+        log("Selection diagnostics enabled (observation only; scroll requests and shared list state, at most once per "
+            "second).");
 }
-}
+} // namespace gd

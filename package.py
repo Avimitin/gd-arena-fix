@@ -5,14 +5,17 @@ import hashlib
 import zipfile
 
 NAME = "gd-arena-fix"
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 root = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output-dir", type=Path, default=root,
                     help="ZIP/checksum destination (default: source directory)")
-output = parser.parse_args().output_dir.resolve()
+parser.add_argument("--dist-dir", type=Path, default=root / "dist",
+                    help="directory containing the built DLL (default: dist)")
+args = parser.parse_args()
+output = args.output_dir.resolve()
 output.mkdir(parents=True, exist_ok=True)
-dist = root / "dist"
+dist = args.dist_dir.resolve()
 
 # The user archive contains exactly these two files, with no wrapper folder.
 # Always ship the public default INI rather than a developer's active profile.
@@ -31,8 +34,9 @@ with zipfile.ZipFile(binary_archive, "w", zipfile.ZIP_DEFLATED) as archive:
 
 source_files = [root / name for name in (
     "README.md", "LICENSE", "build.cmd", "package.py", f"{NAME}.ini",
+    "CMakeLists.txt", "CMakePresets.json", ".clang-format", "requirements-dev.txt",
     ".gitignore", ".gitattributes", ".github/workflows/build.yml")]
-for directory in ("src", "tests", "third_party/minhook/src", "third_party/minhook/include"):
+for directory in ("src", "tests", "tools", "third_party/minhook/src", "third_party/minhook/include"):
     source_files += [path for path in (root / directory).rglob("*")
                     if path.is_file() and path.suffix in {".c", ".cpp", ".h", ".py", ".rc", ".asm"}
                     and not any(part.startswith(".") for part in path.relative_to(root).parts)]

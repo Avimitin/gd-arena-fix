@@ -1,4 +1,4 @@
-// Paths are relative to build/, where build.cmd invokes the resource compiler.
 // Keep notices in the DLL so the user package needs only the DLL and its INI.
-GD_LICENSE RCDATA "..\\LICENSE"
-MINHOOK_LICENSE RCDATA "..\\third_party\\minhook\\LICENSE.txt"
+// CMake adds the source root to the resource compiler's include paths.
+GD_LICENSE RCDATA "LICENSE"
+MINHOOK_LICENSE RCDATA "third_party\\minhook\\LICENSE.txt"

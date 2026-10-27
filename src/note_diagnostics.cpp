@@ -21,7 +21,10 @@ struct Stats {
 static Stats stats[2];
 static float previous_time[2]{};
 static bool have_time[2]{};
-struct NoteContext { bool active = false; float until = 0, speed = 0; };
+struct NoteContext {
+    bool active = false;
+    float until = 0, speed = 0;
+};
 static thread_local NoteContext context;
 
 static int64_t __fastcall batch(int player, float time, unsigned mode, int64_t unused, unsigned char skin) {
@@ -29,38 +32,47 @@ static int64_t __fastcall batch(int player, float time, unsigned mode, int64_t u
         auto& s = stats[player];
         ++s.batches;
         if (have_time[player]) {
-            if (time == previous_time[player]) ++s.repeated;
-            else ++s.moving;
+            if (time == previous_time[player])
+                ++s.repeated;
+            else
+                ++s.moving;
         }
         have_time[player] = true;
         previous_time[player] = s.song_time = time;
     }
     return original_batch(player, time, mode, unused, skin);
 }
-static int64_t __fastcall position(int player, int lane, float until, float tail,
-        float speed, int hit, unsigned mode, unsigned char skin) {
+static int64_t __fastcall position(int player, int lane, float until, float tail, float speed, int hit, unsigned mode,
+                                   unsigned char skin) {
     const auto saved = context;
     context = {true, until, speed};
     auto result = original_position(player, lane, until, tail, speed, hit, mode, skin);
     context = saved;
     return result;
 }
-static int64_t __fastcall draw(int player, float x, float y, float tail, int lane,
-        unsigned char alpha, int hit, unsigned mode, unsigned char skin) {
+static int64_t __fastcall draw(int player, float x, float y, float tail, int lane, unsigned char alpha, int hit,
+                               unsigned mode, unsigned char skin) {
     // Match the renderer's outer Y culling. Restrict to ordinary note heads.
-    if (context.active && unsigned(player) < 2 && lane >= 0 && lane <= 8 &&
-            y >= -100.0f && y <= 820.0f && (mode != 0 || y >= 300.0f)) {
+    if (context.active && unsigned(player) < 2 && lane >= 0 && lane <= 8 && y >= -100.0f && y <= 820.0f &&
+        (mode != 0 || y >= 300.0f)) {
         auto& s = stats[player];
         if (context.until >= 0) {
             ++s.upcoming;
-            if (alpha == 255) ++s.opaque; else ++s.faded;
+            if (alpha == 255)
+                ++s.opaque;
+            else
+                ++s.faded;
             s.minimum_alpha = std::min(s.minimum_alpha, unsigned(alpha));
             s.maximum_alpha = std::max(s.maximum_alpha, unsigned(alpha));
             s.speed_low = std::min(s.speed_low, context.speed);
             s.speed_high = std::max(s.speed_high, context.speed);
             const auto options = *static_cast<const uint8_t**>(at(target::get().note_options));
-            if (options) { s.fade1 = options[target::layout::note_fade1 + player]; s.fade2 = options[target::layout::note_fade2 + player]; }
-        } else ++s.past;
+            if (options) {
+                s.fade1 = options[target::layout::note_fade1 + player];
+                s.fade2 = options[target::layout::note_fade2 + player];
+            }
+        } else
+            ++s.past;
     }
     // Observation only: pass every argument, including alpha, through unchanged.
     return original_draw(player, x, y, tail, lane, alpha, hit, mode, skin);
@@ -68,18 +80,19 @@ static int64_t __fastcall draw(int player, float x, float y, float tail, int lan
 std::vector<DiagnosticHook> note_diagnostic_hooks() {
     return {
         bind_hook(target::get().note_batch, reinterpret_cast<void*>(batch), reinterpret_cast<void**>(&original_batch)),
-        bind_hook(target::get().note_position, reinterpret_cast<void*>(position), reinterpret_cast<void**>(&original_position)),
-        bind_hook(target::get().note_draw, reinterpret_cast<void*>(draw), reinterpret_cast<void**>(&original_draw))
-    };
+        bind_hook(target::get().note_position, reinterpret_cast<void*>(position),
+                  reinterpret_cast<void**>(&original_position)),
+        bind_hook(target::get().note_draw, reinterpret_cast<void*>(draw), reinterpret_cast<void**>(&original_draw))};
 }
 void report_note_diagnostics(double elapsed) {
     for (unsigned player = 0; player < 2; ++player) {
         const auto& s = stats[player];
-        log("NOTE P%u: batches %.2f/s, changed/repeated song positions %u/%u, song %.3f; upcoming %u opaque %u faded %u alpha %u..%u; past %u; speed scalar %.3f..%.3f; fade flags %u/%u",
-            player + 1, s.batches / elapsed, s.moving, s.repeated, s.song_time,
-            s.upcoming, s.opaque, s.faded, s.upcoming ? s.minimum_alpha : 0, s.maximum_alpha,
-            s.past, s.upcoming ? s.speed_low : 0, s.speed_high, s.fade1, s.fade2);
+        log("NOTE P%u: batches %.2f/s, changed/repeated song positions %u/%u, song %.3f; upcoming %u opaque %u faded "
+            "%u alpha %u..%u; past %u; speed scalar %.3f..%.3f; fade flags %u/%u",
+            player + 1, s.batches / elapsed, s.moving, s.repeated, s.song_time, s.upcoming, s.opaque, s.faded,
+            s.upcoming ? s.minimum_alpha : 0, s.maximum_alpha, s.past, s.upcoming ? s.speed_low : 0, s.speed_high,
+            s.fade1, s.fade2);
         stats[player] = {};
     }
 }
-}
+} // namespace gd

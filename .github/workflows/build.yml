@@ -28,33 +28,23 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Build DLL and test executable
+      - name: Install developer tools
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Check formatting
+        run: python tools/format.py --check
+
+      - name: Build DLL and test executable with CMake
         shell: cmd
         run: call build.cmd
 
-      - name: Check centralized game profiles
-        run: python tests/profile_data.py
-
       # This check needs neither the game nor a hardware graphics adapter.
       # Full D3D/game-image tests are run locally on the target machine.
-      - name: Check packaged default configuration
-        shell: cmd
-        run: dist\gd-arena-fix-test.exe --check-config 120 0
+      - name: Run CTest checks
+        run: ctest --preset windows-release
 
       - name: Package and verify distribution ZIPs
-        run: python package.py --output-dir artifacts
-
-      - name: Check animation clocks
-        shell: cmd
-        run: dist\gd-arena-fix-test.exe --test-animation-clock
-
-      - name: Check elapsed-time clocks and configuration
-        shell: cmd
-        run: dist\gd-arena-fix-test.exe --test-timing
-
-      - name: Check inline hook register preservation and unwind
-        shell: cmd
-        run: dist\gd-arena-fix-test.exe --test-inline-hook
+        run: cmake --build --preset windows-release --target dist-zip
 
       - name: Upload binary ZIP
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
