@@ -12,6 +12,7 @@
 *.exp
 *.pdb
 *.ilk
+*.map
 *.pch
 *.ipch
 

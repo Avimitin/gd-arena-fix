@@ -4,6 +4,10 @@
 #include <cstdlib>
 
 namespace gd {
+inline bool valid_config(const Config& value) {
+    return value.width == 1920 && value.height == 1080 && value.fps >= 60 &&
+        value.refresh == value.fps && (value.fps == 60 || value.experimental);
+}
 inline unsigned read_setting(const wchar_t* key, unsigned fallback, const wchar_t* path) {
     unsigned result = GetPrivateProfileIntW(L"display", key, fallback, path);
     wchar_t environment[80], value[80];
@@ -20,6 +24,7 @@ inline Config read_config(const wchar_t* path) {
     result.experimental = read_setting(L"Experimental", 0, path) != 0;
     result.diagnostics = read_setting(L"Diagnostics", 0, path) != 0;
     result.disable_live2d = read_setting(L"DisableLive2D", 0, path) != 0;
+    result.animation_timing = read_setting(L"AnimationTiming", 0, path);
     return result;
 }
 }

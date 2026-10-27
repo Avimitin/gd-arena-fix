@@ -18,11 +18,11 @@ void initialize() {
     wcscat_s(ini, L".ini");
     config = read_config(ini);
     log("Config file: %ls", ini);
-    log("gd-arena-fix prototype 0.1.4: %ux%u @ %u; target FPS %u; experimental=%d",
+    log("gd-arena-fix 0.1.5: %ux%u @ %u; target FPS %u; experimental=%d",
         config.width, config.height, config.refresh, config.fps, config.experimental);
-    if (config.width != 1920 || config.height != 1080 || (config.refresh != 60 && config.refresh != 120) ||
-        (config.fps != 60 && config.fps != 120) || (config.fps == 120 && (!config.experimental || config.refresh != 120)))
-        throw std::runtime_error("unsupported settings (120 FPS requires Experimental=1 and Refresh=120)");
+    if (!valid_config(config))
+        throw std::runtime_error("unsupported settings (1920x1080, FPS >= 60, Refresh=FPS; FPS > 60 requires Experimental=1)");
+    if (config.animation_timing > 2) throw std::runtime_error("AnimationTiming must be 0, 1 or 2");
     if (!validate_game(game)) throw std::runtime_error("unsupported gdxg.dll hash; no game patches installed");
     install_timing_and_present();
     // No hot unload: COM tables and trampolines must remain valid for process life.

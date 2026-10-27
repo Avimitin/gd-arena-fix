@@ -5,7 +5,7 @@ import hashlib
 import zipfile
 
 NAME = "gd-arena-fix"
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 root = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output-dir", type=Path, default=root,
@@ -34,7 +34,7 @@ source_files = [root / name for name in (
     ".gitignore", ".gitattributes", ".github/workflows/build.yml")]
 for directory in ("src", "tests", "third_party/minhook/src", "third_party/minhook/include"):
     source_files += [path for path in (root / directory).rglob("*")
-                    if path.is_file() and path.suffix in {".c", ".cpp", ".h", ".py", ".rc"}
+                    if path.is_file() and path.suffix in {".c", ".cpp", ".h", ".py", ".rc", ".asm"}
                     and not any(part.startswith(".") for part in path.relative_to(root).parts)]
 source_files += [root / "third_party/minhook" / name for name in ("LICENSE.txt", "README.md")]
 source_files += sorted((root / "docs").rglob("*.md"))

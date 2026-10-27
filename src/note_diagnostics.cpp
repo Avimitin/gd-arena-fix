@@ -58,8 +58,8 @@ static int64_t __fastcall draw(int player, float x, float y, float tail, int lan
             s.maximum_alpha = std::max(s.maximum_alpha, unsigned(alpha));
             s.speed_low = std::min(s.speed_low, context.speed);
             s.speed_high = std::max(s.speed_high, context.speed);
-            const auto options = *static_cast<const uint8_t**>(at(0x1808C4A50));
-            if (options) { s.fade1 = options[4188 + player]; s.fade2 = options[4190 + player]; }
+            const auto options = *static_cast<const uint8_t**>(at(target::get().note_options));
+            if (options) { s.fade1 = options[target::layout::note_fade1 + player]; s.fade2 = options[target::layout::note_fade2 + player]; }
         } else ++s.past;
     }
     // Observation only: pass every argument, including alpha, through unchanged.
@@ -67,12 +67,9 @@ static int64_t __fastcall draw(int player, float x, float y, float tail, int lan
 }
 std::vector<DiagnosticHook> note_diagnostic_hooks() {
     return {
-        {0x1803C06E0, {0x4c,0x8b,0xdc,0x55,0x57,0x41,0x57,0x48,0x81,0xec,0xa0,0,0,0},
-            reinterpret_cast<void*>(batch), reinterpret_cast<void**>(&original_batch)},
-        {0x1803C0350, {0x48,0x8b,0xc4,0x48,0x89,0x68,0x18,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57},
-            reinterpret_cast<void*>(position), reinterpret_cast<void**>(&original_position)},
-        {0x1803BFCB0, {0x48,0x8b,0xc4,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0xf0,0,0,0},
-            reinterpret_cast<void*>(draw), reinterpret_cast<void**>(&original_draw)}
+        bind_hook(target::get().note_batch, reinterpret_cast<void*>(batch), reinterpret_cast<void**>(&original_batch)),
+        bind_hook(target::get().note_position, reinterpret_cast<void*>(position), reinterpret_cast<void**>(&original_position)),
+        bind_hook(target::get().note_draw, reinterpret_cast<void*>(draw), reinterpret_cast<void**>(&original_draw))
     };
 }
 void report_note_diagnostics(double elapsed) {

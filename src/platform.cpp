@@ -41,7 +41,7 @@ bool write_memory(void* destination, const void* source, size_t size) {
     DWORD ignored;
     return VirtualProtect(destination, size, protection, &ignored) != FALSE;
 }
-void* at(uintptr_t va) { return reinterpret_cast<uint8_t*>(game) + (va - 0x180000000ULL); }
+void* at(uintptr_t va) { return reinterpret_cast<uint8_t*>(game) + (va - target::get().preferred_base); }
 static void** find_import(HMODULE module, const char* name, const char* dll, unsigned ordinal) {
     auto base = reinterpret_cast<uint8_t*>(module);
     if (!base || reinterpret_cast<IMAGE_DOS_HEADER*>(base)->e_magic != IMAGE_DOS_SIGNATURE) return nullptr;
@@ -102,7 +102,7 @@ bool validate_game(HMODULE module) {
     if (!GetModuleFileNameW(module, path, MAX_PATH)) return false;
     const auto hash = sha256_file(path);
     log("gdxg.dll SHA256: %s", hash.c_str());
-    return hash == "0ed4aabc75f5bd997c237759d5fcf17143aa69073110b5c9235d1515cf0fd32c";
+    return target::select(hash);
 }
 // Replace individual slots in the existing table. Native D3D implementations
 // can use private slots beyond the public COM interface: cloning only the public

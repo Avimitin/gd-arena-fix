@@ -32,6 +32,9 @@ jobs:
         shell: cmd
         run: call build.cmd
 
+      - name: Check centralized game profiles
+        run: python tests/profile_data.py
+
       # This check needs neither the game nor a hardware graphics adapter.
       # Full D3D/game-image tests are run locally on the target machine.
       - name: Check packaged default configuration
@@ -40,6 +43,18 @@ jobs:
 
       - name: Package and verify distribution ZIPs
         run: python package.py --output-dir artifacts
+
+      - name: Check animation clocks
+        shell: cmd
+        run: dist\gd-arena-fix-test.exe --test-animation-clock
+
+      - name: Check elapsed-time clocks and configuration
+        shell: cmd
+        run: dist\gd-arena-fix-test.exe --test-timing
+
+      - name: Check inline hook register preservation and unwind
+        shell: cmd
+        run: dist\gd-arena-fix-test.exe --test-inline-hook
 
       - name: Upload binary ZIP
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

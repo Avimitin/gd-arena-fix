@@ -42,6 +42,29 @@ workflow, and dependency notices. `SHA256SUMS.txt` is a separate file listing
 the hashes of both ZIPs. The package version is set in `package.py`.
 Omit `--output-dir` to place these outputs in the source directory.
 
+## Game build profiles
+
+[`src/game_profile.h`](../src/game_profile.h) is the single source for game
+addresses, instruction signatures, replacement bytes and native layout offsets.
+Addresses use IDA's preferred virtual addresses; `at()` relocates them against
+the selected profile's image base. The DLL selects a profile once by SHA-256
+before installing any game hooks. Unknown images are rejected.
+
+For a new game build, verify the corresponding routines in IDA, add a named
+`Profile` in that header, and register it in `supported`. Keep version checks out
+of hook implementations. The common `layout` section describes the currently
+supported native ABI; a changed object layout or calling convention requires
+new verification, not just a replacement hash. Build support is not established
+until instruction guards and the native image fixtures pass for that image.
+
+The Python probes read the same literal profile definitions. Run
+`py -3 tests/profile_data.py` to check that game addresses have not escaped into
+other source or test files; this check also runs in CI. Direct3D/Win32 API slots
+and generic x64 bridge instructions are independent of game build profiles.
+
+See the [frame-dependency audit](frame-dependency-audit.md) for confirmed
+coverage, remaining paths and the reproducible scanner.
+
 ## GitHub Actions
 
 `.github/workflows/build.yml` runs on pushes, pull requests, and manual
@@ -84,13 +107,35 @@ dependencies. Supply your own supported `gdxg.dll`:
 .\dist\gd-arena-fix-test.exe --verify-image 'C:\path\to\gdxg.dll' 1 120
 ```
 
-The last two arguments are `DisableLive2D` (`0`/`1`) and FPS (`60`/`120`).
+The trailing arguments are `DisableLive2D` (`0`/`1`), FPS (e.g. `60`/`120`/`144`/`240`), and
+optional `AnimationTiming` (`0`/`1`/`2`, default `2` in this test command).
 Run all four combinations after changes to the character patches. The test
 checks instruction guards, MinHook relocation, the selected timing patches,
 unchanged shared constants and game-file hash, and retained character IDs.
 It executes two real character-pair builders with synthetic empty state and
 the patched gameplay ID block. Each character patch's conflict guard must
 abort before installing hooks. It does not load models or test scene changes.
+
+With animation hooks enabled, the test also executes the real native
+animation evaluator, recursive updater, GF/DM sprite batches and standalone
+sprite updater. A substitute draw function observes fractional movement and
+alpha without a graphics device. These tests check callback frequency,
+pose restoration, manual overrides, stopped animations, native register
+preservation and avoidance of double throttling. Modes `0`, `1`, `2` and
+the 60 FPS path should all be checked after animation changes.
+
+`--test-animation-clock` checks elapsed-time accumulation at several render
+rates, jitter, inactive objects and bounded catch-up without a game image.
+This arithmetic check also runs in CI. Detailed scope is in
+[Animation timing](animations.md).
+
+`--test-timing` checks configuration and elapsed-time clocks at 60/90/120/144/
+240/360 Hz, duplicates, pauses, stalls and inactive scenes without a game image.
+It also runs in CI. Above 60 FPS, `--verify-image` executes the native menu
+countdown aliases, reset/clear functions, audio sampler, cursor lookup and song
+filter using synthetic state. The timed-play wrapper uses a substitute callback
+for its unrelated frame work. Run at 120/144/240 with animation modes 0/1/2 after
+clock changes. See [Timing](timing.md) for exact coverage and hardware limits.
 
 ## Note diagnostics
 
@@ -109,6 +154,7 @@ same chart, using the same visibility settings. The capture test verifies
 
 ## References
 
+- [Timing, input, audio and judgment line](timing.md), including the earlier fixed-divisor filter probe.
 - [Implementation and limitations](implementation.md)
 - [Spice2x launcher](https://github.com/spice2x/spice2x.github.io/tree/main/src/spice2x/launcher)
 - [MinHook](https://github.com/TsudaKageyu/minhook/tree/v1.3.4)

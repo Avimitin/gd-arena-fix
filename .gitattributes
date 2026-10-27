@@ -5,6 +5,7 @@
 *.c text eol=lf
 *.h text eol=lf
 *.rc text eol=lf
+*.asm text eol=lf
 *.py text eol=lf
 *.yml text eol=lf
 *.md text eol=lf

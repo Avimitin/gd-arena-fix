@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "game_profile.h"
 
 namespace gd {
 struct Config {
@@ -13,6 +14,7 @@ struct Config {
     bool experimental = false;
     bool diagnostics = false;
     bool disable_live2d = false;
+    unsigned animation_timing = 0;
 };
 extern Config config;
 extern HMODULE self, game;
