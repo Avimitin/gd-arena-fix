@@ -18,7 +18,7 @@ void initialize() {
     wcscat_s(ini, L".ini");
     config = read_config(ini);
     log("Config file: %ls", ini);
-    log("gd-arena-fix 0.1.5: %ux%u @ %u; target FPS %u; experimental=%d",
+    log("gd-arena-fix 0.1.6: %ux%u @ %u; target FPS %u; experimental=%d",
         config.width, config.height, config.refresh, config.fps, config.experimental);
     if (!valid_config(config))
         throw std::runtime_error("unsupported settings (1920x1080, FPS >= 60, Refresh=FPS; FPS > 60 requires Experimental=1)");

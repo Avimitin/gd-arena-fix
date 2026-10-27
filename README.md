@@ -6,7 +6,7 @@ A GITADORA Delta display and frame-rate mod loaded through spice2x.
 
 - 1920×1080 main-screen output with experimental high-refresh support, including 120, 144 and 240 Hz.
 - Elapsed-time menu countdowns and an audio-based song clock above 60 FPS.
-- Optional animation-speed correction and smoother native animation at higher frame rates.
+- Animation-speed correction and smoother native animation at higher frame rates, enabled by default.
 - Correct cursor reach across the full 1080p screen.
 - Optional removal of the left/right Live2D characters to reduce rendering and animation work.
 
@@ -40,17 +40,18 @@ Remove this DLL's `-k` argument to stop loading the mod.
 
 All settings belong under `[display]` in the INI beside the DLL. The files must
 have matching names: `gd-arena-fix.dll` reads `gd-arena-fix.ini`.
+The packaged INI defaults to 120 Hz / 120 FPS with animation smoothing enabled.
 Restart the game after changing a setting.
 
 ```ini
 [display]
 Width=1920
 Height=1080
-Refresh=60
-FPS=60
-Experimental=0
+Refresh=120
+FPS=120
+Experimental=1
 DisableLive2D=0
-AnimationTiming=0
+AnimationTiming=2
 Diagnostics=0
 ```
 
@@ -58,20 +59,20 @@ Diagnostics=0
 | --- | --- | --- |
 | `Width` | `1920` | Main-screen output width. Only `1920` is supported. |
 | `Height` | `1080` | Main-screen output height. Only `1080` is supported. |
-| `Refresh` | `60` | Requested fullscreen refresh rate in Hz, such as `60`, `120`, `144` or `240`. Requires display support. |
-| `FPS` | `60` | Target frame rate, at least `60`. Use the same value as `Refresh`; actual performance depends on the hardware and spice2x settings. |
-| `Experimental` | `0` | Set to `1` for any frame rate above `60`. Timing and visual issues may still occur. |
+| `Refresh` | `120` | Requested fullscreen refresh rate in Hz, such as `60`, `120`, `144` or `240`. Requires display support. |
+| `FPS` | `120` | Target frame rate, at least `60`. Use the same value as `Refresh`; actual performance depends on the hardware and spice2x settings. |
+| `Experimental` | `1` | Set to `1` for any frame rate above `60`. Timing and visual issues may still occur. |
 | `DisableLive2D` | `0` | `1` disables the optional left/right cabinet characters in menus and normal gameplay. `0` follows the game's settings. Saved selections are preserved; special scene characters and cut-ins can still appear. |
-| `AnimationTiming` | `0` | Above 60 FPS: `0` leaves native animation speed unchanged; `1` corrects supported animation and sprite-effect speed; `2` also smooths supported movement and fades. Sprite artwork retains its original frame count. |
+| `AnimationTiming` | `2` | Above 60 FPS: `0` leaves native animation speed unchanged; `1` corrects supported animation and sprite-effect speed; `2` also smooths supported movement and fades. Sprite artwork retains its original frame count. |
 | `Diagnostics` | `0` | `1` enables extra GuitarFreaks note logging and **Ctrl+Shift+F8** screenshots while the game is focused. Captures are saved beside the DLL and may briefly pause rendering. Leave at `0` for normal play. |
 
-For 120 Hz / 120 FPS with animation correction:
+For a 60 Hz display, use:
 
 ```ini
-Refresh=120
-FPS=120
-Experimental=1
-AnimationTiming=2
+Refresh=60
+FPS=60
+Experimental=0
+AnimationTiming=0
 ```
 
 For 144 or 240 Hz, change both `Refresh` and `FPS` to that rate.

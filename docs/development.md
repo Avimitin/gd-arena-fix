@@ -67,21 +67,28 @@ coverage, remaining paths and the reproducible scanner.
 
 ## GitHub Actions
 
-`.github/workflows/build.yml` runs on pushes, pull requests, and manual
-dispatch using `windows-2022`. It builds the DLL and test executable,
-checks the default INI, packages both ZIPs, and uploads the ZIPs and checksums
-as separate artifacts. Actions are pinned to commits and use read-only
-repository permissions. Artifact retention is 30 days.
+`.github/workflows/build.yml` runs only on tag pushes using `windows-2022`.
+It builds the DLL and test executable, checks the default INI, packages both
+ZIPs, and uploads the ZIPs and checksums as separate artifacts with 30-day
+retention. After all checks pass, it also uploads both ZIPs and
+`SHA256SUMS.txt` to the pushed tag's GitHub Release, creating the release if
+needed. Actions are pinned to commits. The workflow uses the built-in
+`GITHUB_TOKEN` with `contents: write` permission to publish release assets;
+no additional secret is needed.
+
+Before tagging a release, update `VERSION` in `package.py` to match the
+release version, since that value determines the ZIP filenames.
 
 CI does not run the game or the Direct3D smoke test. Those checks require
 the supported game image or a suitable graphics environment.
 
 ## Local checks
 
-On a fresh build, check the public defaults without starting the game:
+On a fresh build, check the public 120 Hz / 120 FPS defaults without starting
+the game:
 
 ```powershell
-.\dist\gd-arena-fix-test.exe --check-config 60 0
+.\dist\gd-arena-fix-test.exe --check-config 120 0
 ```
 
 The final argument is the expected `DisableLive2D` value. This check uses

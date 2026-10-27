@@ -2,11 +2,11 @@ name: Build distribution
 
 on:
   push:
-  pull_request:
-  workflow_dispatch:
+    tags:
+      - '**'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -39,7 +39,7 @@ jobs:
       # Full D3D/game-image tests are run locally on the target machine.
       - name: Check packaged default configuration
         shell: cmd
-        run: dist\gd-arena-fix-test.exe --check-config 60 0
+        run: dist\gd-arena-fix-test.exe --check-config 120 0
 
       - name: Package and verify distribution ZIPs
         run: python package.py --output-dir artifacts
@@ -79,3 +79,13 @@ jobs:
           archive: false
           if-no-files-found: error
           retention-days: 30
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/gd-arena-fix-*-binary.zip
+            artifacts/gd-arena-fix-*-source.zip
+            artifacts/SHA256SUMS.txt
