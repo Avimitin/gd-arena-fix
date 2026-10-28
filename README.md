@@ -4,9 +4,10 @@ A GITADORA Delta display and frame-rate mod loaded through spice2x.
 
 ## Features
 
-- 1920Ã—1080 main-screen output with experimental high-refresh support, including 120, 144 and 240 Hz.
+- 1920x1080 main-screen output with experimental high-refresh support, including 120, 144 and 240 Hz.
 - Elapsed-time menu countdowns and an audio-based song clock above 60 FPS.
 - Animation-speed correction and smoother native animation at higher frame rates, enabled by default.
+- Smoother GuitarFreaks and DrumMania note motion when audio position updates arrive in steps.
 - Correct cursor reach across the full 1080p screen.
 - Optional removal of the left/right Live2D characters to reduce rendering and animation work.
 - Optional reduction of left/right video and effect compositing while keeping main and touch output.
@@ -30,7 +31,7 @@ changes memory only; the original game DLL stays intact.
 
 4. Edit the INI as described below, then start the game using your usual script.
 
-Choose a refresh rate your display supports at 1920Ã—1080. Match any existing
+Choose a refresh rate your display supports at 1920x1080. Match any existing
 `-graphics-force-refresh` argument to that rate. In windowed mode, match the
 Windows desktop refresh rate too. Higher-rate modes still need gameplay testing.
 
@@ -42,7 +43,7 @@ Remove this DLL's `-k` argument to stop loading the mod.
 
 All settings belong under `[display]` in the INI beside the DLL. The files must
 have matching names: `gd-arena-fix.dll` reads `gd-arena-fix.ini`.
-The packaged INI defaults to 120 Hz / 120 FPS with animation smoothing enabled.
+The packaged INI defaults to 120 Hz / 120 FPS with animation and note smoothing enabled.
 Restart the game after changing a setting.
 
 ```ini
@@ -54,6 +55,7 @@ FPS=120
 DisableLive2D=0
 DisableSideCompositing=0
 AnimationTiming=2
+NoteSmoothing=1
 NativeRendering=0
 Diagnostics=0
 ```
@@ -67,6 +69,7 @@ Diagnostics=0
 | `DisableLive2D` | `0` | `1` disables the optional left/right cabinet characters in menus and normal gameplay. `0` follows the game's settings. Saved selections are preserved; special scene characters and cut-ins can still appear. |
 | `DisableSideCompositing` | `0` | `1` skips video/effect compositing for the left/right cabinet screens and also disables their optional characters. Use only when the main and touch screens are needed. |
 | `AnimationTiming` | `2` | Above 60 FPS: `0` leaves native animation speed unchanged; `1` corrects supported animation and sprite-effect speed; `2` also smooths supported movement and fades. Sprite artwork retains its original frame count. |
+| `NoteSmoothing` | `1` | Smooths GuitarFreaks and DrumMania note movement above 60 FPS while following song time. Audio playback and hit judgment are unchanged. Use `0` to draw directly from the reported song position. |
 | `NativeRendering` | `0` | `1` renders the main screen at 1080p to reduce GPU work. Experimental; use `0` for the original 4K rendering and downsampling if graphics look wrong. Assets and auxiliary screens are unchanged. |
 | `Diagnostics` | `0` | `1` enables extra note/selection logging and **Ctrl+Shift+F8** screenshots while the game is focused. Captures are saved beside the DLL and may briefly pause rendering. Leave at `0` for normal play. |
 

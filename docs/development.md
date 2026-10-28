@@ -145,8 +145,10 @@ dependencies. Supply your own supported `gdxg.dll`:
 .\dist\gd-arena-fix-test.exe --verify-image 'C:\path\to\gdxg.dll' 1 120
 ```
 
-The trailing arguments are `DisableLive2D` (`0`/`1`), FPS (e.g. `60`/`120`/`144`/`240`), and
-optional `AnimationTiming` (`0`/`1`/`2`, default `2` in this test command).
+The trailing arguments are `DisableLive2D` (`0`/`1`), FPS (e.g. `60`/`120`/`144`/`240`),
+`AnimationTiming` (`0`/`1`/`2`, default `2`), `DisableSideCompositing` (`0`/`1`),
+and `NoteSmoothing` (`0`/`1`). The last two default to `0` in this test command.
+For note smoothing, use `--verify-image 'C:\path\to\gdxg.dll' 1 120 2 0 1`.
 Run all four combinations after changes to the character patches. The test
 checks instruction guards, MinHook relocation, the selected timing patches,
 unchanged shared constants and game-file hash, and retained character IDs.

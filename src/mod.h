@@ -16,6 +16,7 @@ struct Config {
     bool disable_side_compositing = false;
     unsigned animation_timing = 0;
     bool native_rendering = false;
+    bool note_smoothing = true;
 };
 extern Config config;
 extern HMODULE self, game;

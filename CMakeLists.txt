@@ -71,7 +71,7 @@ add_custom_target(default-ini ALL
 add_dependencies(gd-arena-fix default-ini)
 
 if(BUILD_TESTING)
-    add_executable(gd-arena-fix-test tests/smoke.cpp tests/inline_fixture.asm)
+    add_executable(gd-arena-fix-test tests/smoke.cpp tests/inline_fixture.asm tests/note_fixture.asm)
     target_link_libraries(gd-arena-fix-test PRIVATE gd-core)
     target_link_options(gd-arena-fix-test PRIVATE "/MAP:${GD_OUTPUT_DIR}/gd-arena-fix-test.map")
     add_dependencies(gd-arena-fix-test default-ini)
@@ -87,9 +87,13 @@ if(BUILD_TESTING)
     add_test(NAME animation-clock COMMAND gd-arena-fix-test --test-animation-clock)
     add_test(NAME method-lookup COMMAND gd-arena-fix-test --test-method-lookup)
     add_test(NAME timing COMMAND gd-arena-fix-test --test-timing)
+    add_test(NAME note-clock COMMAND gd-arena-fix-test --test-note-clock)
+    add_test(NAME note-config COMMAND gd-arena-fix-test --test-note-config)
+    add_test(NAME note-rendering COMMAND gd-arena-fix-test --test-note-rendering)
+    add_test(NAME dm-note-rendering COMMAND gd-arena-fix-test --test-dm-note-rendering)
     add_test(NAME inline-hook COMMAND gd-arena-fix-test --test-inline-hook)
     add_test(NAME game-profiles COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/profile_data.py")
-    set_tests_properties(config-default config-high-refresh config-side-compositing animation-clock method-lookup timing inline-hook
+    set_tests_properties(config-default config-high-refresh config-side-compositing animation-clock method-lookup timing note-clock note-config note-rendering dm-note-rendering inline-hook
         PROPERTIES WORKING_DIRECTORY "${GD_OUTPUT_DIR}")
 endif()
 

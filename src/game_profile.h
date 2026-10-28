@@ -29,6 +29,10 @@ struct Site {
     uintptr_t address;
     Bytes signature;
 };
+struct DMClockRead {
+    Site site;
+    uint8_t destination;
+};
 struct Patch {
     uintptr_t address;
     Bytes before, after;
@@ -119,6 +123,10 @@ struct Profile {
     Site menu_update0, menu_update1, menu_update2, menu_set, menu_clear, play_timer;
     Site animation_update, animation_sample, animation_draw, sprite_update, gameplay_visual, dm_sprites, gf_sprites;
     Site note_batch, note_position, note_draw;
+    // Chart-note projection calls only; excludes separately generated markers.
+    std::array<uintptr_t, 6> note_position_returns;
+    std::array<DMClockRead, 5> dm_clock_reads;
+    uintptr_t dm_clock_raw;
     Site font_projection_constants;
     uintptr_t font_projection_constants_return;
     Site cursor_call;
@@ -548,6 +556,13 @@ inline constexpr Profile delta{
     .note_draw = {0x1803BFCB0,
                   {0x48, 0x8b, 0xc4, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x81, 0xec, 0xf0, 0, 0,
                    0}},
+    .note_position_returns = {0x1803C08A7, 0x1803C0917, 0x1803C0946, 0x1803C0975, 0x1803C09A4, 0x1803C09D3},
+    .dm_clock_reads = {{{{0x1803BAD27, {0xc5, 0xfa, 0x10, 0x3d, 0x29, 0xef, 0xc0, 0x2f}}, 7},
+                        {{0x1803BB241, {0xc5, 0xfa, 0x10, 0x3d, 0x0f, 0xea, 0xc0, 0x2f}}, 7},
+                        {{0x1803BB639, {0xc5, 0xfa, 0x10, 0x35, 0x17, 0xe6, 0xc0, 0x2f}}, 6},
+                        {{0x1803BC769, {0xc5, 0xfa, 0x10, 0x35, 0xe7, 0xd4, 0xc0, 0x2f}}, 6},
+                        {{0x1803BCF20, {0xc5, 0x7a, 0x10, 0x0d, 0x30, 0xcd, 0xc0, 0x2f}}, 9}}},
+    .dm_clock_raw = 0x1AFFC9C58,
     .font_projection_constants = {0x1800E501F,
                                   {0x33, 0xd2, 0x48, 0x8b, 0xcb, 0xc5, 0xf8, 0x77, 0xff, 0x90, 0xf0, 0x02, 0x00, 0x00}},
     .font_projection_constants_return = 0x1800E502D,

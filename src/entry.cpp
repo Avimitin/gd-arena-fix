@@ -33,7 +33,7 @@ void initialize() {
             log("NativeRendering disabled: font projection signature mismatch; using 3840x2160 fallback");
         }
     }
-    log("gd-arena-fix 0.1.8: %ux%u @ %u; target FPS %u; native main rendering %s", config.width, config.height,
+    log("gd-arena-fix 0.1.9: %ux%u @ %u; target FPS %u; native main rendering %s", config.width, config.height,
         config.refresh, config.fps, config.native_rendering ? "enabled (experimental)" : "disabled");
     install_timing_and_present();
     // No hot unload: COM tables and trampolines must remain valid for process life.

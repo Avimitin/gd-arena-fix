@@ -15,6 +15,35 @@ static void check(bool condition, const char* text) {
     if (!condition)
         throw std::runtime_error(text);
 }
+static void note_config_test() {
+    wchar_t directory[MAX_PATH]{}, path[MAX_PATH]{};
+    check(GetTempPathW(MAX_PATH, directory) > 0, "temporary directory for note configuration test");
+    check(GetTempFileNameW(directory, L"gdn", 0, path) != 0, "temporary INI for note configuration test");
+    constexpr wchar_t setting[] = L"GDMOD_NoteSmoothing";
+    const DWORD required = GetEnvironmentVariableW(setting, nullptr, 0);
+    std::vector<wchar_t> previous(required);
+    if (required)
+        GetEnvironmentVariableW(setting, previous.data(), required);
+    struct Cleanup {
+        const wchar_t* path;
+        const wchar_t* setting;
+        bool had_environment;
+        const wchar_t* previous;
+        ~Cleanup() {
+            DeleteFileW(path);
+            SetEnvironmentVariableW(setting, had_environment ? previous : nullptr);
+        }
+    } cleanup{path, setting, required != 0, previous.empty() ? nullptr : previous.data()};
+    SetEnvironmentVariableW(setting, nullptr);
+    check(WritePrivateProfileStringW(L"display", L"FPS", L"120", path) != FALSE,
+          "write temporary note configuration INI");
+    const auto missing = gd::read_config(path);
+    check(missing.note_smoothing, "missing NoteSmoothing key defaults to enabled");
+    check(WritePrivateProfileStringW(L"display", L"NoteSmoothing", L"0", path) != FALSE,
+          "write explicit NoteSmoothing opt-out");
+    check(!gd::read_config(path).note_smoothing, "NoteSmoothing=0 explicitly disables smoothing");
+    puts("PASS: note smoothing defaults on and accepts an explicit INI opt-out");
+}
 #include "method_lookup.h"
 #include "animations.h"
 #include "timing.h"
@@ -22,6 +51,9 @@ static void check(bool condition, const char* text) {
 #include "inline_hook.h"
 #include "selection_diagnostics.h"
 #include "selection_motion.h"
+#include "note_clock.h"
+#include "note_rendering.h"
+#include "dm_note_rendering.h"
 extern "C" HRESULT gd_vs_constant_fixture(void*, IDirect3DDevice9Ex*, UINT, const float*, UINT);
 extern "C" char gd_vs_constant_fixture_return;
 static D3DSWAPEFFECT native_smoke_effect = D3DSWAPEFFECT_DISCARD;
@@ -710,7 +742,7 @@ static void direct_backbuffer_present_test(IDirect3DDevice9Ex* device, D3DSWAPEF
     puts("PASS: direct backbuffer identity and alternating frame colors across PresentEx");
 }
 static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, unsigned animations,
-                        bool disable_side_compositing) {
+                        bool disable_side_compositing, bool note_smoothing) {
     const auto image_hash = gd::sha256_file(path);
     check(gd::target::select(image_hash), "supported game file selects one central address profile");
     std::ifstream file(path, std::ios::binary);
@@ -742,6 +774,27 @@ static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, 
     gd::config.disable_live2d = disable_live2d;
     gd::config.disable_side_compositing = disable_side_compositing;
     gd::config.animation_timing = animations;
+    gd::config.note_smoothing = note_smoothing;
+    for (auto return_va : gd::target::get().note_position_returns) {
+        auto instruction = static_cast<const uint8_t*>(gd::at(return_va)) - 5;
+        int32_t relative;
+        memcpy(&relative, instruction + 1, sizeof(relative));
+        check(*instruction == 0xe8 && instruction + 5 + relative == gd::at(gd::target::get().note_position.address),
+              "GF visual-only caller allowlist resolves to native note projection calls");
+    }
+    for (const auto& read : gd::target::get().dm_clock_reads) {
+        const auto* instruction = static_cast<const uint8_t*>(gd::at(read.site.address));
+        check(read.site.signature.length == 8 && memcmp(instruction, read.site.signature.storage.data(), 8) == 0,
+              "DM note clock VEX instruction matches the selected profile bytes");
+        check(instruction[0] == 0xc5 && (instruction[1] == 0xfa || instruction[1] == 0x7a) && instruction[2] == 0x10 &&
+                  (instruction[3] & 0xc7) == 0x05,
+              "DM note clock site is a RIP-relative VEX MOVSS load");
+        int32_t relative = 0;
+        memcpy(&relative, instruction + 4, sizeof(relative));
+        const auto destination = ((instruction[1] & 0x80) ? 0U : 8U) | ((instruction[3] >> 3) & 7U);
+        check(instruction + 8 + relative == gd::at(gd::target::get().dm_clock_raw) && destination == read.destination,
+              "DM note clock site reads its declared shared raw global into the selected XMM register");
+    }
     const bool suppress_characters = disable_live2d || disable_side_compositing;
     for (const auto& hook : gd::selection_diagnostic_hooks()) {
         auto site = static_cast<uint8_t*>(gd::at(hook.address));
@@ -798,6 +851,10 @@ static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, 
         for (const auto* patch : gd::scene_timing_patches())
             patch_sites.push_back(patch->address);
         for (const auto& hook : gd::scene_inline_hooks())
+            patch_sites.push_back(hook.site->address);
+        const auto dm_note_hooks = gd::note_inline_hooks();
+        check(dm_note_hooks.size() == 5, "Diagnostics includes all DM note clock sites in timing transactions");
+        for (const auto& hook : dm_note_hooks)
             patch_sites.push_back(hook.site->address);
         if (animations)
             for (const auto& hook : gd::animation_inline_hooks())
@@ -980,6 +1037,22 @@ int wmain(int argc, wchar_t** argv) {
     });
     try {
         gd::self = GetModuleHandleW(nullptr);
+        if (argc == 2 && wcscmp(argv[1], L"--test-note-clock") == 0) {
+            note_clock_test();
+            return 0;
+        }
+        if (argc == 2 && wcscmp(argv[1], L"--test-note-config") == 0) {
+            note_config_test();
+            return 0;
+        }
+        if (argc == 2 && wcscmp(argv[1], L"--test-note-rendering") == 0) {
+            note_rendering_test();
+            return 0;
+        }
+        if (argc == 2 && wcscmp(argv[1], L"--test-dm-note-rendering") == 0) {
+            dm_note_rendering_test();
+            return 0;
+        }
         if (argc == 2 && wcscmp(argv[1], L"--test-method-lookup") == 0) {
             method_lookup_test::test();
             puts("PASS: COM original-method lookup across misses, hooked vtables, indices and registry growth");
@@ -1032,10 +1105,10 @@ int wmain(int argc, wchar_t** argv) {
             return 0;
         }
         if (argc >= 3 && wcscmp(argv[1], L"--verify-image") == 0)
-            return verify_image(argv[2], argc >= 4 && wcstoul(argv[3], nullptr, 10) != 0,
-                                argc >= 5 ? wcstoul(argv[4], nullptr, 10) : 120,
-                                argc >= 6 ? wcstoul(argv[5], nullptr, 10) : 2,
-                                argc >= 7 && wcstoul(argv[6], nullptr, 10) != 0);
+            return verify_image(
+                argv[2], argc >= 4 && wcstoul(argv[3], nullptr, 10) != 0,
+                argc >= 5 ? wcstoul(argv[4], nullptr, 10) : 120, argc >= 6 ? wcstoul(argv[5], nullptr, 10) : 2,
+                argc >= 7 && wcstoul(argv[6], nullptr, 10) != 0, argc >= 8 && wcstoul(argv[7], nullptr, 10) != 0);
         if (argc == 2 && (wcscmp(argv[1], L"--native-rendering") == 0 || wcscmp(argv[1], L"--native-direct") == 0 ||
                           wcscmp(argv[1], L"--native-direct-copy") == 0)) {
             gd::config.native_rendering = true;

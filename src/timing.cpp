@@ -39,6 +39,34 @@ struct Capture {
 };
 static thread_local Capture* pending_capture;
 
+static bool valid_note_projection_callers(const target::Profile& profile) {
+    for (const auto return_va : profile.note_position_returns) {
+        if (return_va < 5)
+            return false;
+        const auto instruction = static_cast<const uint8_t*>(at(return_va)) - 5;
+        if (instruction[0] != 0xe8)
+            return false;
+        int32_t relative = 0;
+        memcpy(&relative, instruction + 1, sizeof(relative));
+        if (instruction + 5 + relative != at(profile.note_position.address))
+            return false;
+    }
+    return true;
+}
+static bool valid_dm_clock_reads(const target::Profile& profile) {
+    for (const auto& read : profile.dm_clock_reads) {
+        if (read.site.signature.length != 8)
+            return false;
+        const auto instruction = static_cast<const uint8_t*>(at(read.site.address));
+        int32_t relative = 0;
+        memcpy(&relative, instruction + 4, sizeof(relative));
+        if (reinterpret_cast<intptr_t>(instruction + 8) + relative !=
+            reinterpret_cast<intptr_t>(at(profile.dm_clock_raw)))
+            return false;
+    }
+    return true;
+}
+
 void begin_timing_frame(double elapsed) {
     begin_scene_frame(scene_frame().serial + 1, elapsed);
 }
@@ -216,12 +244,19 @@ void install_timing_and_present() {
     const auto& profile = target::get();
     const auto cursor_call = profile.cursor_call.signature.copy();
     require_bytes(profile.present.address, profile.present.signature.copy());
+    const bool gf_callers_valid = !config.note_smoothing || config.fps <= 60 || valid_note_projection_callers(profile);
+    set_gf_projection_callers_valid(gf_callers_valid);
+    if (config.note_smoothing && config.fps > 60 && !gf_callers_valid) {
+        log("GuitarFreaks note projection disabled: caller validation failed; DrumMania remains enabled");
+    }
     const auto diagnostics = [] {
-        if (!config.diagnostics)
+        if (!config.diagnostics && !(config.note_smoothing && gf_projection_callers_valid() && config.fps > 60))
             return std::vector<DiagnosticHook>{};
         auto hooks = note_diagnostic_hooks();
-        const auto selection = selection_diagnostic_hooks();
-        hooks.insert(hooks.end(), selection.begin(), selection.end());
+        if (config.diagnostics) {
+            const auto selection = selection_diagnostic_hooks();
+            hooks.insert(hooks.end(), selection.begin(), selection.end());
+        }
         return hooks;
     }();
     for (const auto& hook : diagnostics)
@@ -237,12 +272,18 @@ void install_timing_and_present() {
         require_bytes(hook.address, hook.signature);
     const auto scenes = timing ? scene_timing_hooks() : std::vector<DiagnosticHook>{};
     auto inline_hooks = timing ? scene_inline_hooks() : std::vector<InlineHook>{};
+    if (timing && (config.note_smoothing || config.diagnostics)) {
+        const auto note_hooks = note_inline_hooks();
+        inline_hooks.insert(inline_hooks.end(), note_hooks.begin(), note_hooks.end());
+    }
     if (timing && config.animation_timing) {
         const auto sprite_hooks = animation_inline_hooks();
         inline_hooks.insert(inline_hooks.end(), sprite_hooks.begin(), sprite_hooks.end());
     }
     for (const auto& hook : inline_hooks)
         require_bytes(hook.site->address, hook.site->signature.copy());
+    if (timing && (config.note_smoothing || config.diagnostics) && !valid_dm_clock_reads(profile))
+        throw std::runtime_error("DM note clock reader does not reference the profiled raw source");
     for (const auto& hook : scenes)
         require_bytes(hook.address, hook.signature);
     const auto scene_patches = timing ? scene_timing_patches() : std::vector<const target::Patch*>{};
@@ -383,6 +424,16 @@ void install_timing_and_present() {
         !timing || !config.animation_timing ? "animation hooks disabled"
         : config.animation_timing == 2      ? "60 Hz native/effect clocks with render interpolation (experimental)"
                                             : "60 Hz native/effect clocks (experimental)");
+    log("NoteSmoothing=%d: %s", config.note_smoothing,
+        config.note_smoothing && timing && gf_projection_callers_valid()
+            ? "GuitarFreaks chart-note projection and DrumMania render-pass clocks; elapsed phase smoothing, +/-25 ms "
+              "correction bound; raw song, judgment and audio clocks unchanged"
+        : config.note_smoothing && timing && !gf_projection_callers_valid()
+            ? "DrumMania render-pass smoothing active; GuitarFreaks caller validation failed; raw song, judgment "
+              "and audio clocks unchanged"
+        : config.note_smoothing ? "enabled preference is inactive at 60 Hz; raw song, judgment and audio clocks "
+                                  "unchanged"
+                                : "disabled; original note projection retained");
     log("DisableLive2D=%d: %s", config.disable_live2d,
         config.disable_live2d
             ? "left/right cabinet character creation disabled (3 guarded sites); saved selections retained"

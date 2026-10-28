@@ -159,7 +159,7 @@ After `0x180286EC0` runs, the mod replaces `0x1B008B430` with this audio time.
 Without a matching capture it uses the resolved native raw time at
 `0x1B008B438`. Startup below three ticks retains the native zero output.
 Backward/forward seeks take effect immediately; a held nonzero playback
-position stays held. There is no recursive settling delay or extrapolation
+position stays held in the shared song clock. There is no recursive settling delay or extrapolation
 past a valid held position. The already-existing missing-source fallback
 advances at 300 units per elapsed second, retaining fractional remainders and
 charging each frame once. Long stalls are not clipped for this fallback.
@@ -167,7 +167,9 @@ charging each frame once. Long stalls are not clipped for this fallback.
 Song, visual, pad and pedal offsets remain unchanged. No assumed ASIO buffer
 or display latency is added. A backend cursor may itself be quantized or lead
 audible output; measuring that relationship remains necessary. Direct sampling
-can expose backend cursor steps previously hidden by smoothing.
+can expose mixer cursor steps previously hidden by smoothing. Optional
+[note smoothing](note-timing.md) estimates visual positions between these
+updates without changing the shared clock or judgment time.
 
 ## Menu and timed-play clocks
 
