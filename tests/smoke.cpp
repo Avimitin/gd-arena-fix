@@ -59,12 +59,287 @@ static void fullscreen_window_test() {
     DestroyWindow(window);
     puts("PASS: fullscreen-style 4K HWND resized to 1080p, pointer reaches right/bottom, correct monitor origin");
 }
+static std::vector<uint32_t> read_surface(IDirect3DDevice9Ex* device, IDirect3DSurface9* surface,
+                                          const D3DSURFACE_DESC& desc) {
+    IDirect3DSurface9* readable = nullptr;
+    hr(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, &readable, nullptr),
+       "create readback surface");
+    hr(device->GetRenderTargetData(surface, readable), "read surface data");
+    D3DLOCKED_RECT lock{};
+    hr(readable->LockRect(&lock, nullptr, D3DLOCK_READONLY), "lock surface readback");
+    std::vector<uint32_t> pixels(size_t(desc.Width) * desc.Height);
+    for (unsigned y = 0; y < desc.Height; ++y)
+        memcpy(pixels.data() + size_t(y) * desc.Width, static_cast<const uint8_t*>(lock.pBits) + size_t(y) * lock.Pitch,
+               size_t(desc.Width) * 4);
+    readable->UnlockRect();
+    readable->Release();
+    return pixels;
+}
+static uint32_t pixel(const std::vector<uint32_t>& pixels, const D3DSURFACE_DESC& desc, unsigned x, unsigned y) {
+    check(x < desc.Width && y < desc.Height, "pixel lies within surface");
+    return pixels[size_t(y) * desc.Width + x] & 0xffffff;
+}
+static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9* logical, const D3DSURFACE_DESC& desc) {
+    check(desc.Width == 1920 && desc.Height == 1080, "native main canvas has physical dimensions");
+    D3DVIEWPORT9 observed_viewport{};
+    hr(device->GetViewport(&observed_viewport), "get viewport immediately after native canvas creation");
+    check(observed_viewport.X == 0 && observed_viewport.Y == 0 && observed_viewport.Width == 3840 &&
+              observed_viewport.Height == 2160,
+          "initial native viewport is reported in logical 4K coordinates");
+    D3DVIEWPORT9 viewport{0, 0, 3840, 2160, 0.0f, 1.0f};
+    hr(device->SetViewport(&viewport), "set logical viewport");
+    hr(device->GetViewport(&observed_viewport), "get logical viewport");
+    check(observed_viewport.X == viewport.X && observed_viewport.Y == viewport.Y &&
+              observed_viewport.Width == viewport.Width && observed_viewport.Height == viewport.Height,
+          "viewport reads in logical coordinates");
+    RECT scissor{0, 0, 1920, 1080};
+    hr(device->SetScissorRect(&scissor), "set logical scissor");
+    RECT observed_scissor{};
+    hr(device->GetScissorRect(&observed_scissor), "get logical scissor");
+    check(memcmp(&scissor, &observed_scissor, sizeof(scissor)) == 0, "scissor reads in logical coordinates");
+    RECT oversized_scissor{0, 0, 7680, 4320};
+    hr(device->SetScissorRect(&oversized_scissor), "set oversized logical AFP scissor");
+    hr(device->GetScissorRect(&observed_scissor), "get oversized logical AFP scissor");
+    check(memcmp(&oversized_scissor, &observed_scissor, sizeof(oversized_scissor)) == 0,
+          "oversized AFP scissor is accepted and remains in logical coordinates");
+    hr(device->SetScissorRect(&scissor), "restore half-size logical scissor");
+
+    IDirect3DStateBlock9* block = nullptr;
+    hr(device->CreateStateBlock(D3DSBT_ALL, &block), "create native state block");
+    D3DVIEWPORT9 other_viewport{320, 216, 960, 540, 0.0f, 1.0f};
+    RECT other_scissor{320, 216, 1280, 756};
+    hr(device->SetViewport(&other_viewport), "change viewport before state capture");
+    hr(device->SetScissorRect(&other_scissor), "change scissor before state capture");
+    hr(block->Capture(), "capture native state block");
+    hr(device->SetViewport(&viewport), "change viewport after state capture");
+    RECT changed_scissor{0, 0, 3840, 2160};
+    hr(device->SetScissorRect(&changed_scissor), "change scissor after state capture");
+    hr(block->Apply(), "apply native state block");
+    block->Release();
+    hr(device->GetViewport(&observed_viewport), "get viewport after state restore");
+    hr(device->GetScissorRect(&observed_scissor), "get scissor after state restore");
+    check(observed_viewport.X == other_viewport.X && observed_viewport.Y == other_viewport.Y &&
+              observed_viewport.Width == other_viewport.Width && observed_viewport.Height == other_viewport.Height,
+          "state block restores viewport once in logical coordinates");
+    check(memcmp(&other_scissor, &observed_scissor, sizeof(other_scissor)) == 0,
+          "state block restores scissor once in logical coordinates");
+
+    hr(device->SetRenderTarget(0, logical), "bind native canvas");
+    viewport = {0, 0, 3840, 2160, 0.0f, 1.0f};
+    hr(device->SetViewport(&viewport), "set full logical viewport for projected drawing");
+    scissor = {0, 0, 1920, 1080};
+    hr(device->SetScissorRect(&scissor), "set half-size logical scissor");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE), "enable scissor test");
+    hr(device->SetRenderState(D3DRS_LIGHTING, FALSE), "disable fixed-function lighting");
+    hr(device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE), "disable triangle culling");
+    hr(device->SetRenderState(D3DRS_ZENABLE, FALSE), "disable depth testing for smoke geometry");
+    D3DMATRIX identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    hr(device->SetTransform(D3DTS_WORLD, &identity), "set identity world transform");
+    hr(device->SetTransform(D3DTS_VIEW, &identity), "set identity view transform");
+    hr(device->SetTransform(D3DTS_PROJECTION, &identity), "set identity projection transform");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor while testing Clear rectangles");
+    hr(device->Clear(0, nullptr, D3DCLEAR_TARGET, 0xff0000ff, 1.0f, 0), "clear native canvas blue");
+    D3DRECT logical_clear{0, 0, 1920, 1080};
+    hr(device->Clear(1, &logical_clear, D3DCLEAR_TARGET, 0xffff0000, 1.0f, 0), "clear logical half-size rectangle");
+    auto clear_pixels = read_surface(device, logical, desc);
+    check(pixel(clear_pixels, desc, 900, 400) == 0xff0000 && pixel(clear_pixels, desc, 1200, 400) == 0x0000ff &&
+              pixel(clear_pixels, desc, 900, 700) == 0x0000ff,
+          "clear rectangle scales from logical to native coordinates");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor for full canvas clear");
+    hr(device->Clear(0, nullptr, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0), "clear native canvas black");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE), "enable scissor for projected drawing");
+    struct Vertex {
+        float x, y, z;
+        D3DCOLOR color;
+    };
+    const Vertex triangle[]{
+        {-1.0f, -1.0f, 0.5f, 0xff00ff00}, {1.0f, -1.0f, 0.5f, 0xff00ff00}, {0.0f, 1.0f, 0.5f, 0xff00ff00}};
+    hr(device->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE), "set projected triangle format");
+    hr(device->BeginScene(), "begin projected drawing");
+    hr(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, triangle, sizeof(Vertex)), "draw projected triangle");
+    hr(device->EndScene(), "end projected drawing");
+    auto pixels = read_surface(device, logical, desc);
+    check(pixel(pixels, desc, 900, 200) == 0x00ff00, "logical projection reaches expected native pixel");
+    check(pixel(pixels, desc, 1200, 200) == 0x000000, "logical scissor clips projected native drawing");
+    check(pixel(pixels, desc, 480, 700) == 0x000000, "logical scissor clips projected drawing vertically");
+
+    // The game also submits XYZRHW vertices in its 4K screen coordinate space.
+    // This FVF is 28 bytes: XYZRHW, diffuse color, and one texture coordinate.
+    struct TransformedVertex {
+        float x, y, z, rhw;
+        D3DCOLOR color;
+        float u, v;
+    };
+    static_assert(sizeof(TransformedVertex) == 28);
+    const TransformedVertex logical_quad[]{
+        {2800.5f, 1400.5f, 0.5f, 1.0f, 0xff00ff00, 0, 0}, {3400.5f, 1400.5f, 0.5f, 1.0f, 0xff00ff00, 1, 0},
+        {2800.5f, 2000.5f, 0.5f, 1.0f, 0xff00ff00, 0, 1}, {3400.5f, 1400.5f, 0.5f, 1.0f, 0xff00ff00, 1, 0},
+        {3400.5f, 2000.5f, 0.5f, 1.0f, 0xff00ff00, 1, 1}, {2800.5f, 2000.5f, 0.5f, 1.0f, 0xff00ff00, 0, 1}};
+    const std::vector<uint8_t> original_quad(reinterpret_cast<const uint8_t*>(logical_quad),
+                                             reinterpret_cast<const uint8_t*>(logical_quad) + sizeof(logical_quad));
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor for transformed drawing clear");
+    hr(device->Clear(0, nullptr, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0), "clear before transformed drawing");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE), "enable scissor for transformed drawing");
+    RECT full_scissor{0, 0, 3840, 2160};
+    hr(device->SetScissorRect(&full_scissor), "set full logical scissor for transformed drawing");
+    hr(device->SetFVF(0x144), "set game's XYZRHW diffuse texture FVF");
+    hr(device->BeginScene(), "begin transformed drawing");
+    hr(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 2, logical_quad, sizeof(TransformedVertex)),
+       "draw 28-byte transformed quad");
+    hr(device->EndScene(), "end transformed drawing");
+    check(memcmp(logical_quad, original_quad.data(), sizeof(logical_quad)) == 0,
+          "native vertex scaling leaves caller vertex memory unchanged");
+    pixels = read_surface(device, logical, desc);
+    check(pixel(pixels, desc, 1500, 800) == 0x00ff00 && pixel(pixels, desc, 1380, 800) == 0x000000 &&
+              pixel(pixels, desc, 1720, 800) == 0x000000,
+          "logical XYZRHW quad maps to the lower-right native area");
+    check(pixel(pixels, desc, 1399, 800) == 0x000000 && pixel(pixels, desc, 1400, 800) == 0x00ff00 &&
+              pixel(pixels, desc, 1699, 800) == 0x00ff00 && pixel(pixels, desc, 1700, 800) == 0x000000,
+          "half-pixel mapping places transformed quad edges on native pixel boundaries");
+
+    // Two real AFP paths use the 20-byte XYZRHW + diffuse FVF 0x44.
+    struct TransformedColorVertex {
+        float x, y, z, rhw;
+        D3DCOLOR color;
+    };
+    static_assert(sizeof(TransformedColorVertex) == 20);
+    const TransformedColorVertex logical_triangle[]{{2200.5f, 1000.5f, 0.5f, 1.0f, 0xff00ff00},
+                                                    {2600.5f, 1000.5f, 0.5f, 1.0f, 0xff00ff00},
+                                                    {2200.5f, 1400.5f, 0.5f, 1.0f, 0xff00ff00}};
+    const TransformedColorVertex logical_line[]{{2800.5f, 1800.5f, 0.5f, 1.0f, 0xffffff00},
+                                                {3400.5f, 1800.5f, 0.5f, 1.0f, 0xffffff00}};
+    const std::vector<uint8_t> original_triangle(reinterpret_cast<const uint8_t*>(logical_triangle),
+                                                 reinterpret_cast<const uint8_t*>(logical_triangle) +
+                                                     sizeof(logical_triangle));
+    const std::vector<uint8_t> original_line(reinterpret_cast<const uint8_t*>(logical_line),
+                                             reinterpret_cast<const uint8_t*>(logical_line) + sizeof(logical_line));
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor for 20-byte geometry clear");
+    hr(device->Clear(0, nullptr, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0), "clear before 20-byte geometry");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE), "enable scissor for 20-byte geometry");
+    hr(device->SetFVF(0x44), "set game's XYZRHW diffuse FVF");
+    hr(device->BeginScene(), "begin 20-byte transformed drawing");
+    hr(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, logical_triangle, sizeof(TransformedColorVertex)),
+       "draw 20-byte transformed triangle");
+    hr(device->DrawPrimitiveUP(D3DPT_LINELIST, 1, logical_line, sizeof(TransformedColorVertex)),
+       "draw 20-byte transformed line");
+    hr(device->EndScene(), "end 20-byte transformed drawing");
+    check(memcmp(logical_triangle, original_triangle.data(), sizeof(logical_triangle)) == 0 &&
+              memcmp(logical_line, original_line.data(), sizeof(logical_line)) == 0,
+          "20-byte XYZRHW scaling leaves caller vertex memory unchanged");
+    pixels = read_surface(device, logical, desc);
+    check(pixel(pixels, desc, 1150, 550) == 0x00ff00 && pixel(pixels, desc, 1500, 900) == 0xffff00,
+          "20-byte triangle and line list map from logical to native coordinates");
+
+    // Auxiliary targets retain their original sizes and unscaled D3D state.
+    IDirect3DSurface9* auxiliary = nullptr;
+    hr(device->CreateRenderTarget(320, 240, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &auxiliary, nullptr),
+       "create auxiliary render target");
+    D3DSURFACE_DESC auxiliary_desc{};
+    hr(auxiliary->GetDesc(&auxiliary_desc), "describe auxiliary target");
+    check(auxiliary_desc.Width == 320 && auxiliary_desc.Height == 240, "auxiliary render target size is unchanged");
+    D3DVIEWPORT9 small_main_viewport{0, 0, 200, 160, 0.0f, 1.0f};
+    hr(device->SetViewport(&small_main_viewport), "reduce viewport before binding auxiliary target");
+    hr(device->SetRenderTarget(0, auxiliary), "bind auxiliary target");
+    D3DVIEWPORT9 auxiliary_viewport{10, 12, 120, 80, 0.0f, 1.0f};
+    hr(device->SetViewport(&auxiliary_viewport), "set auxiliary viewport");
+    RECT auxiliary_scissor{4, 6, 200, 180};
+    hr(device->SetScissorRect(&auxiliary_scissor), "set auxiliary scissor");
+    hr(device->GetViewport(&observed_viewport), "get auxiliary viewport");
+    hr(device->GetScissorRect(&observed_scissor), "get auxiliary scissor");
+    check(observed_viewport.X == auxiliary_viewport.X && observed_viewport.Y == auxiliary_viewport.Y &&
+              observed_viewport.Width == auxiliary_viewport.Width &&
+              observed_viewport.Height == auxiliary_viewport.Height,
+          "auxiliary viewport remains unscaled");
+    check(memcmp(&auxiliary_scissor, &observed_scissor, sizeof(auxiliary_scissor)) == 0,
+          "auxiliary scissor remains unscaled");
+    D3DVIEWPORT9 full_auxiliary_viewport{0, 0, 320, 240, 0.0f, 1.0f};
+    hr(device->SetViewport(&full_auxiliary_viewport), "restore full auxiliary viewport");
+    RECT full_auxiliary_scissor{0, 0, 320, 240};
+    hr(device->SetScissorRect(&full_auxiliary_scissor), "restore full auxiliary scissor");
+    D3DRECT auxiliary_clear{0, 0, 320, 240};
+    hr(device->Clear(1, &auxiliary_clear, D3DCLEAR_TARGET, 0xffff0000, 1.0f, 0), "clear auxiliary target");
+    const TransformedVertex auxiliary_triangle[]{{40.5f, 40.5f, 0.5f, 1.0f, 0xff00ff00, 0, 0},
+                                                 {180.5f, 40.5f, 0.5f, 1.0f, 0xff00ff00, 1, 0},
+                                                 {40.5f, 180.5f, 0.5f, 1.0f, 0xff00ff00, 0, 1}};
+    const TransformedColorVertex auxiliary_line[]{{40.5f, 30.5f, 0.5f, 1.0f, 0xffffff00},
+                                                  {180.5f, 30.5f, 0.5f, 1.0f, 0xffffff00}};
+    hr(device->SetFVF(0x44), "set auxiliary 20-byte XYZRHW FVF");
+    hr(device->BeginScene(), "begin unscaled auxiliary line");
+    hr(device->DrawPrimitiveUP(D3DPT_LINELIST, 1, auxiliary_line, sizeof(TransformedColorVertex)),
+       "draw unscaled auxiliary line list");
+    hr(device->EndScene(), "end unscaled auxiliary line");
+    hr(device->SetFVF(0x144), "set auxiliary XYZRHW FVF");
+    hr(device->BeginScene(), "begin auxiliary transformed drawing");
+    hr(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, auxiliary_triangle, sizeof(TransformedVertex)),
+       "draw unscaled auxiliary XYZRHW triangle");
+    hr(device->EndScene(), "end auxiliary transformed drawing");
+    auto auxiliary_pixels = read_surface(device, auxiliary, auxiliary_desc);
+    check(pixel(auxiliary_pixels, auxiliary_desc, 160, 120) == 0xff0000 &&
+              pixel(auxiliary_pixels, auxiliary_desc, 70, 70) == 0x00ff00 &&
+              pixel(auxiliary_pixels, auxiliary_desc, 80, 30) == 0xffff00,
+          "auxiliary clear and 20/28-byte transformed vertices remain unscaled");
+    auxiliary->Release();
+
+    HWND auxiliary_window = CreateWindowExW(0, L"STATIC", L"gd-arena-fix auxiliary swapchain", WS_OVERLAPPEDWINDOW, 0,
+                                            0, 640, 360, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    check(auxiliary_window != nullptr, "create auxiliary swapchain window");
+    D3DPRESENT_PARAMETERS auxiliary_pp{};
+    auxiliary_pp.BackBufferWidth = 640;
+    auxiliary_pp.BackBufferHeight = 360;
+    auxiliary_pp.BackBufferFormat = desc.Format;
+    auxiliary_pp.BackBufferCount = 1;
+    auxiliary_pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    auxiliary_pp.Windowed = TRUE;
+    auxiliary_pp.hDeviceWindow = auxiliary_window;
+    IDirect3DSwapChain9* auxiliary_chain = nullptr;
+    hr(device->CreateAdditionalSwapChain(&auxiliary_pp, &auxiliary_chain), "create auxiliary swapchain");
+    IDirect3DSurface9* auxiliary_backbuffer = nullptr;
+    hr(auxiliary_chain->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &auxiliary_backbuffer),
+       "get auxiliary swapchain backbuffer");
+    D3DSURFACE_DESC auxiliary_backbuffer_desc{};
+    hr(auxiliary_backbuffer->GetDesc(&auxiliary_backbuffer_desc), "describe auxiliary swapchain backbuffer");
+    check(auxiliary_backbuffer_desc.Width == 640 && auxiliary_backbuffer_desc.Height == 360,
+          "auxiliary swapchain dimensions remain unchanged");
+    hr(device->SetRenderTarget(0, auxiliary_backbuffer), "bind auxiliary swapchain backbuffer");
+    D3DVIEWPORT9 auxiliary_chain_viewport{10, 12, 120, 80, 0.0f, 1.0f};
+    hr(device->SetViewport(&auxiliary_chain_viewport), "set auxiliary swapchain viewport");
+    hr(device->GetViewport(&observed_viewport), "get auxiliary swapchain viewport");
+    check(observed_viewport.X == auxiliary_chain_viewport.X && observed_viewport.Y == auxiliary_chain_viewport.Y &&
+              observed_viewport.Width == auxiliary_chain_viewport.Width &&
+              observed_viewport.Height == auxiliary_chain_viewport.Height,
+          "auxiliary swapchain viewport remains unscaled");
+    auxiliary_backbuffer->Release();
+    auxiliary_chain->Release();
+    DestroyWindow(auxiliary_window);
+
+    hr(device->SetRenderTarget(0, logical), "restore native canvas after auxiliary target");
+    hr(device->GetViewport(&observed_viewport), "get viewport after rebinding native canvas");
+    hr(device->GetScissorRect(&observed_scissor), "get scissor after rebinding native canvas");
+    check(observed_viewport.X == 0 && observed_viewport.Y == 0 && observed_viewport.Width == 3840 &&
+              observed_viewport.Height == 2160,
+          "rebinding native canvas restores its full logical viewport after auxiliary target");
+    check(observed_scissor.left == 0 && observed_scissor.top == 0 && observed_scissor.right == 3840 &&
+              observed_scissor.bottom == 2160,
+          "rebinding native canvas restores its full logical scissor after auxiliary target");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor test");
+    check(gd::compose(), "compose native canvas to physical output");
+    auto physical = gd::physical_backbuffer();
+    check(physical != nullptr, "native physical backbuffer available");
+    D3DSURFACE_DESC physical_desc{};
+    hr(physical->GetDesc(&physical_desc), "describe native physical output");
+    check(physical_desc.Width == 1920 && physical_desc.Height == 1080, "native output remains 1080p");
+    const auto physical_pixels = read_surface(device, physical, physical_desc);
+    check(physical_pixels == pixels, "native composition copies the complete main canvas without auxiliary leakage");
+    physical->Release();
+}
 static void scaling_test(IDirect3DDevice9Ex* device) {
     IDirect3DSurface9* logical = nullptr;
     hr(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &logical), "logical backbuffer");
     D3DSURFACE_DESC desc{};
     hr(logical->GetDesc(&desc), "logical description");
-    check(desc.Width == 3840 && desc.Height == 2160, "game sees 4K canvas");
+    check(desc.Width == (gd::config.native_rendering ? 1920u : 3840u) &&
+              desc.Height == (gd::config.native_rendering ? 1080u : 2160u),
+          gd::config.native_rendering ? "native mode exposes 1080p main canvas" : "game sees 4K canvas");
     IDirect3DSwapChain9* chain = nullptr;
     hr(device->GetSwapChain(0, &chain), "get main swapchain");
     IDirect3DSurface9* chain_surface = nullptr;
@@ -72,6 +347,12 @@ static void scaling_test(IDirect3DDevice9Ex* device) {
     check(chain_surface == logical, "device and swapchain return same logical canvas");
     chain_surface->Release();
     chain->Release();
+    if (gd::config.native_rendering) {
+        native_rendering_test(device, logical, desc);
+        logical->Release();
+        puts("PASS: native 1080p target projection, clipping, state blocks, auxiliary target isolation");
+        return;
+    }
     hr(device->SetRenderTarget(0, logical), "set logical target");
     const D3DCOLOR colors[]{0xffff0000, 0xff00ff00, 0xff0000ff, 0xffffffff};
     for (int quadrant = 0; quadrant < 4; ++quadrant) {
@@ -394,7 +675,7 @@ int wmain(int argc, wchar_t** argv) {
             animation_clock_test();
             return 0;
         }
-        if ((argc == 3 || argc == 4) && wcscmp(argv[1], L"--check-config") == 0) {
+        if ((argc >= 3 && argc <= 5) && wcscmp(argv[1], L"--check-config") == 0) {
             wchar_t path[MAX_PATH];
             GetModuleFileNameW(nullptr, path, MAX_PATH);
             if (auto slash = wcsrchr(path, L'\\'))
@@ -402,13 +683,16 @@ int wmain(int argc, wchar_t** argv) {
             wcscat_s(path, L"gd-arena-fix.ini");
             auto selected = gd::read_config(path);
             const auto expected = wcstoul(argv[2], nullptr, 10);
-            printf("Native config: %ux%u @ %u; target FPS %u; DisableLive2D=%d\n", selected.width, selected.height,
-                   selected.refresh, selected.fps, selected.disable_live2d);
+            printf("Native config: %ux%u @ %u; target FPS %u; DisableLive2D=%d; NativeRendering=%d\n", selected.width,
+                   selected.height, selected.refresh, selected.fps, selected.disable_live2d, selected.native_rendering);
             check(selected.refresh == expected && selected.fps == expected && gd::valid_config(selected),
                   "requested mode reaches native config reader");
-            if (argc == 4)
+            if (argc >= 4)
                 check(selected.disable_live2d == (wcstoul(argv[3], nullptr, 10) != 0),
                       "INI Live2D preference reaches native reader");
+            if (argc == 5)
+                check(selected.native_rendering == (wcstoul(argv[4], nullptr, 10) != 0),
+                      "INI NativeRendering preference reaches native reader");
             puts("PASS: native INI configuration");
             return 0;
         }
@@ -416,6 +700,10 @@ int wmain(int argc, wchar_t** argv) {
             return verify_image(argv[2], argc >= 4 && wcstoul(argv[3], nullptr, 10) != 0,
                                 argc >= 5 ? wcstoul(argv[4], nullptr, 10) : 120,
                                 argc >= 6 ? wcstoul(argv[5], nullptr, 10) : 2);
+        if (argc == 2 && wcscmp(argv[1], L"--native-rendering") == 0) {
+            gd::config.native_rendering = true;
+            puts("NativeRendering smoke path enabled for this process");
+        }
         gd::FractionalTicks ticks;
         unsigned total = 0;
         for (int i = 0; i < 1200; ++i)

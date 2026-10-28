@@ -248,9 +248,9 @@ inferring cadence from a screenshot or FPS overlay.
    and analog-style pad filtering before changing either. The worker already
    requests high priority and MMCSS; raising process priority is not the first fix.
 4. Keep frame work within 8.333 ms with headroom. Profile GPU work, characters,
-   auxiliary outputs and the 4K logical canvas separately. Current 1080p output
-   still uses a 4K logical render target and a downsample, so it is not proof
-   that all rendering work is native 1080p. Optimize the dominant measured cost.
+   auxiliary outputs and the 4K logical canvas separately. The default 1080p output
+   uses a 4K render target and a downsample. `NativeRendering=1` reduces the
+   main target to 1080p; auxiliary and intermediate targets remain unchanged. Optimize the dominant measured cost.
 5. Tune the ASIO buffer only after measuring underruns and pad-to-sound delay.
    The logged 32-sample configuration is already small. A stable buffer has more
    value than a smaller value that introduces dropouts or scheduling jitter.

@@ -17,8 +17,9 @@ Windows Advanced display settings when comparing modes.
 
 ## Thin or faint notes
 
-The mod renders the logical 4K canvas and downsamples it to 1080p with linear
-`StretchRect`. It does not change note opacity or size. The native note path
+With `NativeRendering=0`, the mod renders the logical 4K canvas and downsamples
+it to 1080p with linear `StretchRect`. With `NativeRendering=1`, the main canvas
+is rendered at 1080p and copied without downsampling. It does not change note opacity or size. The native note path
 uses full alpha for upcoming notes when Hidden/Sudden options are disabled;
 its width helper depends on lane position, mode and skin rather than fall
 speed. This does not establish the opacity of final GPU pixels or perceived
@@ -28,7 +29,8 @@ brightness during motion. Speed-dependent note visibility remains unresolved.
 
 Set `Diagnostics=1` to log note alpha, fall-speed scalar and visibility flags.
 With the game focused, **Ctrl+Shift+F8** saves matched `notes-*-4k.bmp` and
-`notes-*-1080p.bmp` captures beside the DLL. Captures may briefly pause rendering.
+`notes-*-1080p.bmp` captures beside the DLL. Native rendering uses
+`notes-*-canvas.bmp` for the first image instead. Captures may briefly pause rendering.
 
 Compare low and high fall speeds with the same skin and visibility options.
 The paired images help distinguish source artwork from downsampling effects;

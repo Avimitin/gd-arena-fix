@@ -76,10 +76,10 @@ if(BUILD_TESTING)
     target_link_options(gd-arena-fix-test PRIVATE "/MAP:${GD_OUTPUT_DIR}/gd-arena-fix-test.map")
     add_dependencies(gd-arena-fix-test default-ini)
 
-    add_test(NAME config-default COMMAND gd-arena-fix-test --check-config 120 0)
-    add_test(NAME config-high-refresh COMMAND gd-arena-fix-test --check-config 144 0)
+    add_test(NAME config-default COMMAND gd-arena-fix-test --check-config 120 0 0)
+    add_test(NAME config-high-refresh COMMAND gd-arena-fix-test --check-config 144 0 1)
     set_tests_properties(config-high-refresh PROPERTIES
-        ENVIRONMENT "GDMOD_Refresh=144;GDMOD_FPS=144;GDMOD_Experimental=0")
+        ENVIRONMENT "GDMOD_Refresh=144;GDMOD_FPS=144;GDMOD_Experimental=0;GDMOD_NativeRendering=1")
     add_test(NAME animation-clock COMMAND gd-arena-fix-test --test-animation-clock)
     add_test(NAME timing COMMAND gd-arena-fix-test --test-timing)
     add_test(NAME inline-hook COMMAND gd-arena-fix-test --test-inline-hook)

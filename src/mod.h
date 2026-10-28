@@ -14,6 +14,7 @@ struct Config {
     bool diagnostics = false;
     bool disable_live2d = false;
     unsigned animation_timing = 0;
+    bool native_rendering = false;
 };
 extern Config config;
 extern HMODULE self, game;

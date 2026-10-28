@@ -1,6 +1,9 @@
 #include "mod.h"
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
+#include <cstring>
+#include <limits>
 #include <memory>
 
 namespace gd {
@@ -12,14 +15,71 @@ using ChainBuffer = HRESULT(STDMETHODCALLTYPE*)(IDirect3DSwapChain9*, UINT, D3DB
 using ChainRelease = ULONG(STDMETHODCALLTYPE*)(IDirect3DSwapChain9*);
 using ResetEx = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, D3DPRESENT_PARAMETERS*, D3DDISPLAYMODEEX*);
 using Reset = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, D3DPRESENT_PARAMETERS*);
+using SetRenderTarget = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, DWORD, IDirect3DSurface9*);
+using SetViewport = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, const D3DVIEWPORT9*);
+using GetViewport = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, D3DVIEWPORT9*);
+using SetScissor = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, const RECT*);
+using GetScissor = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, RECT*);
+using Clear = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, DWORD, const D3DRECT*, DWORD, DWORD, float, DWORD);
+using GetFVF = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, DWORD*);
+using DrawPrimitiveUP = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, D3DPRIMITIVETYPE, UINT, const void*, UINT);
 
 static IDirect3DDevice9Ex* device = nullptr;
 static IDirect3DSurface9* canvas = nullptr;
+static bool canvas_bound = false;
+static thread_local std::vector<uint8_t> native_up_vertices;
+static thread_local std::vector<D3DRECT> native_clear_rects;
+static std::atomic_flag warned_unhandled_up = ATOMIC_FLAG_INIT;
 static HWND main_window = nullptr;
 static HMONITOR main_monitor = nullptr;
 static unsigned logical_width = 3840, logical_height = 2160;
 static std::vector<IDirect3DSwapChain9*> main_chains;
 static thread_local bool internal_call = false;
+static bool native_target(IDirect3DDevice9Ex* object) {
+    return config.native_rendering && object == device && canvas_bound;
+}
+static int64_t floor_ratio(int64_t value, unsigned numerator, unsigned denominator) {
+    const int64_t scaled = value * numerator;
+    const int64_t quotient = scaled / denominator;
+    return quotient - (scaled % denominator < 0 ? 1 : 0);
+}
+static int64_t ceil_ratio(int64_t value, unsigned numerator, unsigned denominator) {
+    const int64_t scaled = value * numerator;
+    const int64_t quotient = scaled / denominator;
+    return quotient + (scaled % denominator > 0 ? 1 : 0);
+}
+static void scale_viewport(D3DVIEWPORT9& viewport, unsigned width, unsigned height) {
+    const uint64_t right = uint64_t(viewport.X) + viewport.Width;
+    const uint64_t bottom = uint64_t(viewport.Y) + viewport.Height;
+    const UINT left = UINT(floor_ratio(viewport.X, width, logical_width));
+    const UINT top = UINT(floor_ratio(viewport.Y, height, logical_height));
+    viewport.Width = UINT(ceil_ratio(int64_t(right), width, logical_width)) - left;
+    viewport.Height = UINT(ceil_ratio(int64_t(bottom), height, logical_height)) - top;
+    viewport.X = left;
+    viewport.Y = top;
+}
+static void unscale_viewport(D3DVIEWPORT9& viewport) {
+    const uint64_t right = uint64_t(viewport.X) + viewport.Width;
+    const uint64_t bottom = uint64_t(viewport.Y) + viewport.Height;
+    const UINT left = UINT(floor_ratio(viewport.X, logical_width, config.width));
+    const UINT top = UINT(floor_ratio(viewport.Y, logical_height, config.height));
+    viewport.Width = UINT(ceil_ratio(int64_t(right), logical_width, config.width)) - left;
+    viewport.Height = UINT(ceil_ratio(int64_t(bottom), logical_height, config.height)) - top;
+    viewport.X = left;
+    viewport.Y = top;
+}
+static void scale_rect(RECT& rect, unsigned width, unsigned height) {
+    rect.left = LONG(floor_ratio(rect.left, width, logical_width));
+    rect.right = LONG(ceil_ratio(rect.right, width, logical_width));
+    rect.top = LONG(floor_ratio(rect.top, height, logical_height));
+    rect.bottom = LONG(ceil_ratio(rect.bottom, height, logical_height));
+}
+static void unscale_rect(RECT& rect) {
+    rect.left = LONG(floor_ratio(rect.left, logical_width, config.width));
+    rect.right = LONG(ceil_ratio(rect.right, logical_width, config.width));
+    rect.top = LONG(floor_ratio(rect.top, logical_height, config.height));
+    rect.bottom = LONG(ceil_ratio(rect.bottom, logical_height, config.height));
+}
 struct InternalCall {
     bool previous = internal_call;
     InternalCall() {
@@ -31,6 +91,7 @@ struct InternalCall {
 };
 
 void release_canvas() {
+    canvas_bound = false;
     if (canvas) {
         canvas->Release();
         canvas = nullptr;
@@ -55,14 +116,16 @@ static bool make_canvas() {
     physical->Release();
     if (FAILED(description))
         return false;
-    log("Physical main backbuffer: %ux%u; logical canvas: %ux%u", desc.Width, desc.Height, logical_width,
-        logical_height);
+    const unsigned canvas_width = config.native_rendering ? desc.Width : logical_width;
+    const unsigned canvas_height = config.native_rendering ? desc.Height : logical_height;
+    log("Physical main backbuffer: %ux%u; main canvas: %ux%u; logical coordinates: %ux%u", desc.Width, desc.Height,
+        canvas_width, canvas_height, logical_width, logical_height);
     if (desc.Width != config.width || desc.Height != config.height || desc.MultiSampleType != D3DMULTISAMPLE_NONE) {
         log("ERROR: physical output differs from requested dimensions, or MSAA is enabled. Check Spice display "
             "overrides.");
         return false;
     }
-    HRESULT hr = device->CreateRenderTarget(logical_width, logical_height, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
+    HRESULT hr = device->CreateRenderTarget(canvas_width, canvas_height, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
                                             &canvas, nullptr);
     if (FAILED(hr)) {
         log("ERROR: CreateRenderTarget canvas failed: %08lx", hr);
@@ -73,8 +136,14 @@ static bool make_canvas() {
         release_canvas();
         return false;
     }
-    D3DVIEWPORT9 viewport{0, 0, logical_width, logical_height, 0.0f, 1.0f};
-    device->SetViewport(&viewport);
+    canvas_bound = true;
+    D3DVIEWPORT9 viewport{0, 0, canvas_width, canvas_height, 0.0f, 1.0f};
+    hr = device->SetViewport(&viewport);
+    if (FAILED(hr)) {
+        log("ERROR: setting initial main canvas viewport failed: %08lx", hr);
+        release_canvas();
+        return false;
+    }
     return true;
 }
 bool compose() {
@@ -144,6 +213,131 @@ bool save_surface_bmp(IDirect3DDevice9Ex* owner, IDirect3DSurface9* surface, con
     readable->UnlockRect();
     return ok;
 }
+static HRESULT STDMETHODCALLTYPE set_render_target(IDirect3DDevice9Ex* object, DWORD index,
+                                                   IDirect3DSurface9* surface) {
+    auto original = reinterpret_cast<SetRenderTarget>(original_method(object, 37));
+    const HRESULT hr = original(object, index, surface);
+    if (object == device && index == 0 && SUCCEEDED(hr))
+        canvas_bound = surface == canvas;
+    return hr;
+}
+static HRESULT STDMETHODCALLTYPE set_viewport(IDirect3DDevice9Ex* object, const D3DVIEWPORT9* viewport) {
+    auto original = reinterpret_cast<SetViewport>(original_method(object, 47));
+    if (!viewport || internal_call || !native_target(object))
+        return original(object, viewport);
+    D3DVIEWPORT9 adjusted = *viewport;
+    scale_viewport(adjusted, config.width, config.height);
+    return original(object, &adjusted);
+}
+static HRESULT STDMETHODCALLTYPE get_viewport(IDirect3DDevice9Ex* object, D3DVIEWPORT9* viewport) {
+    auto original = reinterpret_cast<GetViewport>(original_method(object, 48));
+    const HRESULT hr = original(object, viewport);
+    if (SUCCEEDED(hr) && viewport && !internal_call && native_target(object))
+        unscale_viewport(*viewport);
+    return hr;
+}
+static HRESULT STDMETHODCALLTYPE set_scissor(IDirect3DDevice9Ex* object, const RECT* rect) {
+    auto original = reinterpret_cast<SetScissor>(original_method(object, 75));
+    if (!rect || internal_call || !native_target(object))
+        return original(object, rect);
+    RECT adjusted = *rect;
+    scale_rect(adjusted, config.width, config.height);
+    return original(object, &adjusted);
+}
+static HRESULT STDMETHODCALLTYPE get_scissor(IDirect3DDevice9Ex* object, RECT* rect) {
+    auto original = reinterpret_cast<GetScissor>(original_method(object, 76));
+    const HRESULT hr = original(object, rect);
+    if (SUCCEEDED(hr) && rect && !internal_call && native_target(object))
+        unscale_rect(*rect);
+    return hr;
+}
+static HRESULT STDMETHODCALLTYPE clear(IDirect3DDevice9Ex* object, DWORD count, const D3DRECT* rects, DWORD flags,
+                                       DWORD color, float z, DWORD stencil) {
+    auto original = reinterpret_cast<Clear>(original_method(object, 43));
+    if (!count || !rects || internal_call || !native_target(object))
+        return original(object, count, rects, flags, color, z, stencil);
+    // The game normally supplies a small rect list. Preserve large lists without
+    // imposing a fixed limit on diagnostic or future callers.
+    D3DRECT stack_rects[16];
+    D3DRECT* adjusted = stack_rects;
+    if (count > sizeof(stack_rects) / sizeof(stack_rects[0])) {
+        try {
+            native_clear_rects.resize(count);
+        } catch (...) {
+            return E_OUTOFMEMORY;
+        }
+        adjusted = native_clear_rects.data();
+    }
+    for (DWORD i = 0; i < count; ++i) {
+        adjusted[i] = rects[i];
+        RECT converted{adjusted[i].x1, adjusted[i].y1, adjusted[i].x2, adjusted[i].y2};
+        scale_rect(converted, config.width, config.height);
+        adjusted[i] = {converted.left, converted.top, converted.right, converted.bottom};
+    }
+    return original(object, count, adjusted, flags, color, z, stencil);
+}
+static HRESULT STDMETHODCALLTYPE draw_primitive_up(IDirect3DDevice9Ex* object, D3DPRIMITIVETYPE type,
+                                                   UINT primitive_count, const void* vertices, UINT stride) {
+    auto original = reinterpret_cast<DrawPrimitiveUP>(original_method(object, 83));
+    if (!vertices || !primitive_count || internal_call || !native_target(object))
+        return original(object, type, primitive_count, vertices, stride);
+    DWORD fvf = 0;
+    auto get_fvf = reinterpret_cast<GetFVF>(original_method(object, 90));
+    if (FAILED(get_fvf(object, &fvf)) || (fvf & D3DFVF_POSITION_MASK) != D3DFVF_XYZRHW)
+        return original(object, type, primitive_count, vertices, stride);
+    if (stride < 16) {
+        if (!warned_unhandled_up.test_and_set())
+            log("WARNING: native main canvas encountered short XYZRHW DrawPrimitiveUP stride %u; "
+                "those vertices remain unscaled",
+                stride);
+        return original(object, type, primitive_count, vertices, stride);
+    }
+    uint64_t vertex_count = primitive_count;
+    switch (type) {
+    case D3DPT_POINTLIST:
+        break;
+    case D3DPT_LINELIST:
+        vertex_count *= 2;
+        break;
+    case D3DPT_LINESTRIP:
+        vertex_count += 1;
+        break;
+    case D3DPT_TRIANGLELIST:
+        vertex_count *= 3;
+        break;
+    case D3DPT_TRIANGLESTRIP:
+    case D3DPT_TRIANGLEFAN:
+        vertex_count += 2;
+        break;
+    default:
+        return original(object, type, primitive_count, vertices, stride);
+    }
+    if (vertex_count > std::numeric_limits<size_t>::max() / stride)
+        return E_OUTOFMEMORY;
+    const size_t bytes = size_t(vertex_count) * stride;
+    try {
+        native_up_vertices.resize(bytes);
+    } catch (...) {
+        if (!warned_unhandled_up.test_and_set())
+            log("ERROR: native main canvas could not allocate reusable XYZRHW scratch storage");
+        return E_OUTOFMEMORY;
+    }
+    std::memcpy(native_up_vertices.data(), vertices, bytes);
+    const float sx = float(config.width) / float(logical_width);
+    const float sy = float(config.height) / float(logical_height);
+    for (uint64_t i = 0; i < vertex_count; ++i) {
+        auto* vertex = native_up_vertices.data() + size_t(i) * stride;
+        float x, y;
+        std::memcpy(&x, vertex, sizeof(x));
+        std::memcpy(&y, vertex + sizeof(x), sizeof(y));
+        // Preserve D3D's pixel-center convention while changing the pixel grid.
+        x = (x + 0.5f) * sx - 0.5f;
+        y = (y + 0.5f) * sy - 0.5f;
+        std::memcpy(vertex, &x, sizeof(x));
+        std::memcpy(vertex + sizeof(x), &y, sizeof(y));
+    }
+    return original(object, type, primitive_count, native_up_vertices.data(), stride);
+}
 void capture_diagnostic_frame() {
     static bool previously_down = false;
     const bool down = (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_SHIFT) & 0x8000) &&
@@ -167,13 +361,14 @@ void capture_diagnostic_frame() {
     swprintf_s(name, L"notes-%04u%02u%02u-%02u%02u%02u-%03u", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
                now.wSecond, now.wMilliseconds);
     const auto prefix = std::wstring(directory) + name;
-    const auto logical_path = prefix + L"-4k.bmp", physical_path = prefix + L"-1080p.bmp";
+    const auto logical_path = prefix + (config.native_rendering ? L"-canvas.bmp" : L"-4k.bmp");
+    const auto physical_path = prefix + L"-1080p.bmp";
     const bool logical_saved = save_surface_bmp(device, canvas, logical_path.c_str());
     auto physical = physical_backbuffer();
     const bool physical_saved = save_surface_bmp(device, physical, physical_path.c_str());
     if (physical)
         physical->Release();
-    log("NOTE capture %ls: 4K=%s, 1080p=%s", prefix.c_str(), logical_saved ? "OK" : "FAILED",
+    log("NOTE capture %ls: main canvas=%s, physical output=%s", prefix.c_str(), logical_saved ? "OK" : "FAILED",
         physical_saved ? "OK" : "FAILED");
 }
 static HRESULT STDMETHODCALLTYPE get_buffer(IDirect3DDevice9Ex* object, UINT chain, UINT index, D3DBACKBUFFER_TYPE type,
@@ -363,6 +558,15 @@ static HRESULT STDMETHODCALLTYPE create_device(IDirect3D9Ex* object, UINT adapte
     hook_method(device, 134, 18, reinterpret_cast<void*>(get_buffer));
     hook_method(device, 134, 16, reinterpret_cast<void*>(reset));
     hook_method(device, 134, 132, reinterpret_cast<void*>(reset_ex));
+    if (config.native_rendering) {
+        hook_method(device, 134, 37, reinterpret_cast<void*>(set_render_target));
+        hook_method(device, 134, 43, reinterpret_cast<void*>(clear));
+        hook_method(device, 134, 47, reinterpret_cast<void*>(set_viewport));
+        hook_method(device, 134, 48, reinterpret_cast<void*>(get_viewport));
+        hook_method(device, 134, 75, reinterpret_cast<void*>(set_scissor));
+        hook_method(device, 134, 76, reinterpret_cast<void*>(get_scissor));
+        hook_method(device, 134, 83, reinterpret_cast<void*>(draw_primitive_up));
+    }
     if (!make_canvas()) {
         release_canvas();
         device->Release();

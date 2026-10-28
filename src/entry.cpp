@@ -19,7 +19,8 @@ void initialize() {
     wcscat_s(ini, L".ini");
     config = read_config(ini);
     log("Config file: %ls", ini);
-    log("gd-arena-fix 0.1.7: %ux%u @ %u; target FPS %u", config.width, config.height, config.refresh, config.fps);
+    log("gd-arena-fix 0.1.7: %ux%u @ %u; target FPS %u; native main rendering %s", config.width, config.height,
+        config.refresh, config.fps, config.native_rendering ? "enabled (experimental)" : "disabled");
     if (!valid_config(config))
         throw std::runtime_error("unsupported settings (1920x1080, FPS >= 60, Refresh=FPS)");
     if (config.animation_timing > 2)
@@ -32,7 +33,9 @@ void initialize() {
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                        reinterpret_cast<LPCWSTR>(&initialize), &pinned);
     active = true;
-    log("Hooks installed. Internal main rendering remains 3840x2160. Runtime gameplay validation is required.");
+    log("Hooks installed. Main logical coordinates: 3840x2160; render target: %s. Runtime gameplay validation is "
+        "required.",
+        config.native_rendering ? "1920x1080" : "3840x2160");
 }
 static HRESULT WINAPI create9ex(UINT version, IDirect3D9Ex** output) {
     std::call_once(initialization, [] {

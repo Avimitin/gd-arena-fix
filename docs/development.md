@@ -112,7 +112,8 @@ the game:
 .\dist\gd-arena-fix-test.exe --check-config 120 0
 ```
 
-The final argument is the expected `DisableLive2D` value. This check uses
+The final argument is the expected `DisableLive2D` value. An optional fourth
+argument checks the expected `NativeRendering` value (`0` or `1`). This check uses
 the same INI reader as the DLL. `GDMOD_<field>` environment variables override
 the corresponding INI values; clear them when checking file-only defaults.
 
@@ -120,11 +121,14 @@ Run the native graphics checks on a machine with a Direct3D 9Ex adapter:
 
 ```powershell
 .\dist\gd-arena-fix-test.exe
+.\dist\gd-arena-fix-test.exe --native-rendering
 ```
 
 This checks fractional timing arithmetic, unsupported-image rejection,
 device/swapchain access to the logical 4K canvas, four-quadrant downsampling,
 BMP color and format, reset behavior, and main-window input dimensions.
+The native-rendering invocation also checks projected and screen-space drawing,
+clipping, state restoration and auxiliary-target isolation at 1080p.
 A hidden fullscreen-style window verifies pointer normalization and monitor
 placement; it is not an actual fullscreen game test.
 

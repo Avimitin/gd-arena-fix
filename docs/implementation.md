@@ -26,12 +26,15 @@ hashing, allocation, and hook installation run on the first D3D call outside
 loader lock. The original factory is retained to preserve spice2x's wrapper.
 The DLL is pinned once active; hot unloading is unsupported.
 
-The main output uses 1920×1080 presentation parameters, while the game sees
-a separate 3840×2160 render target through device and main-swapchain
+The main output uses 1920Ã—1080 presentation parameters, while the game sees
+a separate 3840Ã—2160 render target through device and main-swapchain
 GetBackBuffer calls. Immediately before the game's presentation callback,
 the mod uses StretchRect to downsample that canvas. Reset and ResetEx
 recreate it. Auxiliary render targets retain their original dimensions.
-This does not provide native-1080p rendering savings.
+With `NativeRendering=0`, this does not provide native-1080p rendering savings.
+The opt-in `NativeRendering=1` path instead allocates a 1920?1080 main canvas,
+retains logical coordinates and copies to the output at the same size. See
+[Native rendering](native-rendering.md) for coordinate handling and limitations.
 
 COM hooks replace individual slots in the shared vtable and retain the
 original methods. A limited clone of the public COM vtable is unsafe here:
