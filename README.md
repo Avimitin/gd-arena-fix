@@ -4,12 +4,12 @@ A GITADORA Delta display and frame-rate mod loaded through spice2x.
 
 ## Features
 
-- 1920x1080 main-screen output with experimental high-refresh support, including 120, 144 and 240 Hz.
-- Elapsed-time menu countdowns and an audio-based song clock above 60 FPS.
+- Native 720p, 1080p, 1440p and 4K main-screen output with high-refresh support, including 120, 144 and 240 Hz.
+- Elapsed-time menu countdowns and an audio-based song clock above 60 Hz.
 - Animation-speed correction and smoother native animation at higher frame rates, enabled by default.
 - Smoother GuitarFreaks and DrumMania note motion when audio position updates arrive in steps.
-- Correct cursor reach across the full 1080p screen.
-- Native 1080p main rendering to reduce GPU work.
+- Correct cursor reach across the full screen.
+- Main rendering follows the selected output resolution to reduce GPU work at lower resolutions.
 - Left/right Live2D characters and side video/effect compositing disabled by default, keeping main and touch output.
 
 The mod changes memory only; the original game DLL stays intact.
@@ -29,7 +29,7 @@ The mod changes memory only; the original game DLL stays intact.
 
 4. Edit the INI as described below, then start the game using your usual script.
 
-Choose a refresh rate your display supports at 1920x1080. Match any existing
+Choose a resolution and refresh rate your display supports. Match any existing
 `-graphics-force-refresh` argument to that rate. In windowed mode, match the
 Windows desktop refresh rate too. Higher-rate modes still need gameplay testing.
 
@@ -41,7 +41,7 @@ Remove this DLL's `-k` argument to stop loading the mod.
 
 All settings belong under `[display]` in the INI beside the DLL. The files must
 have matching names: `gd-arena-fix.dll` reads `gd-arena-fix.ini`.
-The packaged INI defaults to 120 Hz / 120 FPS with animation and note smoothing enabled.
+The packaged INI defaults to 1920x1080 at 120 Hz with animation and note smoothing enabled.
 Restart the game after changing a setting.
 
 ```ini
@@ -49,34 +49,38 @@ Restart the game after changing a setting.
 Width=1920
 Height=1080
 Refresh=120
-FPS=120
 DisableLive2D=1
 DisableSideCompositing=1
 AnimationTiming=2
 NoteSmoothing=1
-NativeRendering=1
 Diagnostics=0
 ```
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `Width` | `1920` | Main-screen output width. Only `1920` is supported. |
-| `Height` | `1080` | Main-screen output height. Only `1080` is supported. |
-| `Refresh` | `120` | Requested fullscreen refresh rate in Hz, such as `60`, `120`, `144` or `240`. Requires display support. |
-| `FPS` | `120` | Target frame rate, at least `60`. Use the same value as `Refresh`; actual performance depends on the hardware and spice2x settings. |
+| `Width` | `1920` | Main-screen rendering and output width. Use one of the resolution pairs below. |
+| `Height` | `1080` | Main-screen rendering and output height. Use one of the resolution pairs below. |
+| `Refresh` | `120` | Requested display rate in Hz, at least `60`. Above `60`, enables high-refresh timing fixes. Fullscreen requires display support; in windowed mode match the desktop rate. Actual FPS depends on hardware and spice2x settings. |
 | `DisableLive2D` | `1` | `1` disables the optional left/right cabinet characters in menus and normal gameplay. Set both this and `DisableSideCompositing` to `0` to follow the game's character settings. Saved selections are preserved; special scene characters and cut-ins can still appear. |
 | `DisableSideCompositing` | `1` | `1` skips video/effect compositing for the left/right cabinet screens and also disables their optional characters. Use `0` if those screens are needed. |
-| `AnimationTiming` | `2` | Above 60 FPS: `0` leaves native animation speed unchanged; `1` corrects supported animation and sprite-effect speed; `2` also smooths supported movement and fades. Sprite artwork retains its original frame count. |
-| `NoteSmoothing` | `1` | Smooths GuitarFreaks and DrumMania note movement above 60 FPS while following song time. Audio playback and hit judgment are unchanged. Use `0` to draw directly from the reported song position. |
-| `NativeRendering` | `1` | `1` renders the main screen at 1080p to reduce GPU work. Use `0` for the original 4K rendering and downsampling if graphics look wrong. Assets and auxiliary screens are unchanged. |
+| `AnimationTiming` | `2` | Above 60 Hz: `0` leaves native animation speed unchanged; `1` corrects supported animation and sprite-effect speed; `2` also smooths supported movement and fades. Sprite artwork retains its original frame count. |
+| `NoteSmoothing` | `1` | Smooths GuitarFreaks and DrumMania note movement above 60 Hz while following song time. Audio playback and hit judgment are unchanged. Use `0` to draw directly from the reported song position. |
 | `Diagnostics` | `0` | `1` enables extra note/selection logging and **Ctrl+Shift+F8** screenshots while the game is focused. Captures are saved beside the DLL and may briefly pause rendering. Leave at `0` for normal play. |
+
+Supported `Width` / `Height` pairs:
+
+| Output | Width | Height |
+| --- | --- | --- |
+| 720p | `1280` | `720` |
+| 1080p | `1920` | `1080` |
+| 1440p | `2560` | `1440` |
+| 4K | `3840` | `2160` |
 
 For a 60 Hz display, use:
 
 ```ini
 Refresh=60
-FPS=60
 AnimationTiming=0
 ```
 
-For 144 or 240 Hz, change both `Refresh` and `FPS` to that rate.
+For 144 or 240 Hz, set `Refresh` to that rate.

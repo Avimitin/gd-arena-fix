@@ -102,7 +102,7 @@ static void native_animation_test(unsigned mode) {
     anim_field<uint16_t>(child.data(), gd::target::layout::kind) = 1;
     anim_field<uint8_t>(child.data(), gd::target::layout::transform_flags) = 3;
     animation_callbacks = 0;
-    const unsigned hz = gd::config.fps;
+    const unsigned hz = gd::config.refresh;
     unsigned scene_cues = 0;
     for (unsigned i = 0; i < hz; ++i) {
         animation_test_frame(1.0 / hz);
@@ -239,8 +239,8 @@ static void native_sprite_test() {
         initialize(inlined);
         initialize(nested);
         initialize(direct.data());
-        for (unsigned i = 0; i < gd::config.fps; ++i) {
-            animation_test_frame(1.0 / gd::config.fps);
+        for (unsigned i = 0; i < gd::config.refresh; ++i) {
+            animation_test_frame(1.0 / gd::config.refresh);
             reinterpret_cast<Batch>(gd::at(batch.first))();
             reinterpret_cast<Sprite>(gd::at(gd::target::get().sprite_update.address))(direct.data());
             gd::end_animation_frame();
@@ -253,7 +253,7 @@ static void native_sprite_test() {
               "standalone sprite helper advances at 60 Hz");
         // A new atlas effect begins immediately even between authored ticks.
         anim_field<uint8_t>(inlined, gd::target::layout::sprite_active) = 0;
-        animation_test_frame(1.0 / gd::config.fps);
+        animation_test_frame(1.0 / gd::config.refresh);
         reinterpret_cast<Batch>(gd::at(batch.first))();
         gd::end_animation_frame();
         initialize(inlined);

@@ -244,13 +244,14 @@ void install_timing_and_present() {
     const auto& profile = target::get();
     const auto cursor_call = profile.cursor_call.signature.copy();
     require_bytes(profile.present.address, profile.present.signature.copy());
-    const bool gf_callers_valid = !config.note_smoothing || config.fps <= 60 || valid_note_projection_callers(profile);
+    const bool gf_callers_valid =
+        !config.note_smoothing || config.refresh <= 60 || valid_note_projection_callers(profile);
     set_gf_projection_callers_valid(gf_callers_valid);
-    if (config.note_smoothing && config.fps > 60 && !gf_callers_valid) {
+    if (config.note_smoothing && config.refresh > 60 && !gf_callers_valid) {
         log("GuitarFreaks note projection disabled: caller validation failed; DrumMania remains enabled");
     }
     const auto diagnostics = [] {
-        if (!config.diagnostics && !(config.note_smoothing && gf_projection_callers_valid() && config.fps > 60))
+        if (!config.diagnostics && !(config.note_smoothing && gf_projection_callers_valid() && config.refresh > 60))
             return std::vector<DiagnosticHook>{};
         auto hooks = note_diagnostic_hooks();
         if (config.diagnostics) {
@@ -266,7 +267,7 @@ void install_timing_and_present() {
     for (const auto& patch : optional_render_patches)
         require_bytes(patch.address, patch.before);
     void** afp_slot = nullptr;
-    const bool timing = config.fps > 60;
+    const bool timing = config.refresh > 60;
     const auto timers = timing ? timer_hooks() : std::vector<DiagnosticHook>{};
     for (const auto& hook : timers)
         require_bytes(hook.address, hook.signature);
@@ -446,7 +447,7 @@ void install_timing_and_present() {
                                           "other side canvas work remains"
                                         : "original side compositing retained");
     if (config.diagnostics)
-        log("Note diagnostics enabled (observation only). Ctrl+Shift+F8 saves main 4K/1080p BMPs beside the DLL; "
+        log("Note diagnostics enabled (observation only). Ctrl+Shift+F8 saves main canvas/output BMPs beside the DLL; "
             "capture may briefly stall rendering.");
     if (config.diagnostics)
         log("Selection diagnostics enabled (observation only; scroll requests and shared list state, at most once per "

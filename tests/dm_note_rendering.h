@@ -42,10 +42,10 @@ static void dm_note_rendering_test() {
             gd::game = game;
             gd::config.note_smoothing = smoothing;
             gd::config.diagnostics = diagnostics;
-            gd::config.fps = fps;
+            gd::config.refresh = fps;
             gd::end_scene_frame();
         }
-    } restore{gd::target::selected, gd::game, gd::config.note_smoothing, gd::config.diagnostics, gd::config.fps};
+    } restore{gd::target::selected, gd::game, gd::config.note_smoothing, gd::config.diagnostics, gd::config.refresh};
 
     gd::target::select(gd::target::supported[0]->sha256);
     gd::target::Profile fixture_profile = gd::target::get();
@@ -101,7 +101,7 @@ static void dm_note_rendering_test() {
 
     gd::config.note_smoothing = true;
     gd::config.diagnostics = false;
-    gd::config.fps = 120;
+    gd::config.refresh = 120;
     const auto hooks = gd::note_inline_hooks();
     check(hooks.size() == fixture_profile.dm_clock_reads.size(), "high-FPS DM smoothing exposes all five clock reads");
     std::vector<gd::InlineBridge> bridges;
@@ -188,7 +188,7 @@ static void dm_note_rendering_test() {
 
     gd::config.note_smoothing = false;
     gd::config.diagnostics = true;
-    gd::config.fps = 120;
+    gd::config.refresh = 120;
     check(gd::note_inline_hooks().size() == 5, "Diagnostics retains DM sites for raw-time observation");
     gd::begin_timing_frame(1.0 / 120.0);
     for (size_t i = 0; i < hooks.size(); ++i)
@@ -197,7 +197,7 @@ static void dm_note_rendering_test() {
     gd::end_scene_frame();
 
     gd::config.note_smoothing = true;
-    gd::config.fps = 60;
+    gd::config.refresh = 60;
     check(gd::note_inline_hooks().empty(), "60 Hz does not install DM timing hooks even with Diagnostics enabled");
     gd::begin_timing_frame(1.0 / 60.0);
     for (size_t i = 0; i < hooks.size(); ++i)

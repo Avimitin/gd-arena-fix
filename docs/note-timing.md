@@ -68,7 +68,7 @@ estimator introduces no audio-thread hooks, waits, allocations or logging.
 ## Configuration and verification
 
 The option defaults on; `NoteSmoothing=0` restores direct song-position drawing.
-At 60 FPS it is inactive. `Diagnostics=1` enables raw/visual cadence and
+With `Refresh=60` it is inactive. `Diagnostics=1` enables raw/visual cadence and
 correction reports; a distinct position on every frame does not establish
 even monitor scanout or correct physical audio/display offset.
 

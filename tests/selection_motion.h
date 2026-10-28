@@ -91,7 +91,7 @@ static void native_selection_motion_test(bool category = false) {
               anim_field<int>(ui.data(), layout::phase) == 0 && fixture::stops == 0,
           "reproduce live freeze: unreadied queued scroll stays busy with no progress");
     check(gd::write_memory(gate, patched.data(), patched.size()), "restore selection readiness fix");
-    if (gd::config.fps > 60) {
+    if (gd::config.refresh > 60) {
         // Feed the captured stalled state directly into the actual native engine.
         unsigned completed = 0;
         for (unsigned i = 0; i < 64; ++i)

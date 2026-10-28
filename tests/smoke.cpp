@@ -35,7 +35,7 @@ static void note_config_test() {
         }
     } cleanup{path, setting, required != 0, previous.empty() ? nullptr : previous.data()};
     SetEnvironmentVariableW(setting, nullptr);
-    check(WritePrivateProfileStringW(L"display", L"FPS", L"120", path) != FALSE,
+    check(WritePrivateProfileStringW(L"display", L"Refresh", L"120", path) != FALSE,
           "write temporary note configuration INI");
     const auto missing = gd::read_config(path);
     check(missing.note_smoothing, "missing NoteSmoothing key defaults to enabled");
@@ -43,6 +43,30 @@ static void note_config_test() {
           "write explicit NoteSmoothing opt-out");
     check(!gd::read_config(path).note_smoothing, "NoteSmoothing=0 explicitly disables smoothing");
     puts("PASS: note smoothing defaults on and accepts an explicit INI opt-out");
+}
+static void output_resolution_config_test() {
+    constexpr unsigned supported[][2]{{1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160}};
+    constexpr unsigned refresh_rates[]{60, 120, 144, 160, 240};
+    gd::Config config{};
+    for (const auto& resolution : supported) {
+        config.width = resolution[0];
+        config.height = resolution[1];
+        for (const unsigned refresh : refresh_rates) {
+            config.refresh = refresh;
+            check(gd::valid_config(config), "supported output resolution and Refresh rate are accepted");
+        }
+    }
+    constexpr unsigned rejected[][2]{{0, 0}, {1280, 1080}, {1920, 1200}, {2560, 1600}, {3840, 1440}};
+    for (const auto& resolution : rejected) {
+        config.width = resolution[0];
+        config.height = resolution[1];
+        check(!gd::valid_config(config), "unsupported output resolution is rejected");
+    }
+    config.width = 1920;
+    config.height = 1080;
+    config.refresh = 59;
+    check(!gd::valid_config(config), "refresh below 60 is rejected");
+    puts("PASS: only the four supported output sizes and refresh rates of at least 60 Hz are accepted");
 }
 #include "method_lookup.h"
 #include "animations.h"
@@ -57,6 +81,7 @@ static void note_config_test() {
 extern "C" HRESULT gd_vs_constant_fixture(void*, IDirect3DDevice9Ex*, UINT, const float*, UINT);
 extern "C" char gd_vs_constant_fixture_return;
 static D3DSWAPEFFECT native_smoke_effect = D3DSWAPEFFECT_DISCARD;
+static unsigned output_width = 1920, output_height = 1080;
 static void hr(HRESULT result, const char* text) {
     if (FAILED(result)) {
         printf("HRESULT %08lx: %s\n", result, text);
@@ -67,12 +92,13 @@ static void check_input_extent(HWND window, bool windowed = false) {
     RECT client{};
     check(GetClientRect(window, &client) != FALSE, "input client rectangle available");
     if (windowed)
-        check(client.right > 0 && client.bottom > 0 && client.right <= 1920 && client.bottom <= 1080,
+        check(client.right > 0 && client.bottom > 0 && client.right <= int(output_width) &&
+                  client.bottom <= int(output_height),
               "windowed client fits within output extent (Windows may constrain decorations)");
     else
-        check(client.right == 1920 && client.bottom == 1080, "fullscreen input client matches physical 1080p output");
+        check(client.right == int(output_width) && client.bottom == int(output_height),
+              "fullscreen input client matches requested output");
     // The real game normalizes WM_MOUSE/WM_TOUCH coordinates to 800x1280.
-    // On a 1080p screen with a stale 4K HWND these max out at 399 and 639.
     const int input_x = int(float(client.right - 1) / client.right * 800.0f);
     const int input_y = int(float(client.bottom - 1) / client.bottom * 1280.0f);
     check(input_x == 799 && input_y >= 1278, "physical right/bottom reach full game input range");
@@ -95,7 +121,8 @@ static void fullscreen_window_test() {
     check(ClientToScreen(window, &origin) != FALSE && origin.x == info.rcMonitor.left && origin.y == info.rcMonitor.top,
           "fullscreen client starts at target monitor origin");
     DestroyWindow(window);
-    puts("PASS: fullscreen-style 4K HWND resized to 1080p, pointer reaches right/bottom, correct monitor origin");
+    puts("PASS: fullscreen-style 4K HWND resized to requested output, pointer reaches right/bottom, correct monitor "
+         "origin");
 }
 static std::vector<uint32_t> read_surface(IDirect3DDevice9Ex* device, IDirect3DSurface9* surface,
                                           const D3DSURFACE_DESC& desc) {
@@ -113,9 +140,18 @@ static std::vector<uint32_t> read_surface(IDirect3DDevice9Ex* device, IDirect3DS
     readable->Release();
     return pixels;
 }
-static uint32_t pixel(const std::vector<uint32_t>& pixels, const D3DSURFACE_DESC& desc, unsigned x, unsigned y) {
+static uint32_t physical_pixel(const std::vector<uint32_t>& pixels, const D3DSURFACE_DESC& desc, unsigned x,
+                               unsigned y) {
     check(x < desc.Width && y < desc.Height, "pixel lies within surface");
     return pixels[size_t(y) * desc.Width + x] & 0xffffff;
+}
+static uint32_t main_pixel(const std::vector<uint32_t>& pixels, const D3DSURFACE_DESC& desc, unsigned x, unsigned y) {
+    // Main-output readback coordinates below are expressed on a 1080p reference
+    // grid so the same probes cover every supported native size.
+    check(desc.Width == output_width && desc.Height == output_height, "main pixel probe matches selected output");
+    const unsigned physical_x = unsigned((uint64_t(x) * output_width + 960) / 1920);
+    const unsigned physical_y = unsigned((uint64_t(y) * output_height + 540) / 1080);
+    return physical_pixel(pixels, desc, physical_x, physical_y);
 }
 static uintptr_t com_identity(IUnknown* object) {
     IUnknown* identity = nullptr;
@@ -167,7 +203,8 @@ static void afp_font_projection_test(IDirect3DDevice9Ex* device, IDirect3DSurfac
         return gd_vs_constant_fixture(set_constants, device, start, values, count);
     };
     const auto close = [](float a, float b) { return std::abs(a - b) < 1e-7f; };
-    float physical_projection[16]{2.0f / 1920.0f, 0, 0, -1, 0, -2.0f / 1080.0f, 0, 1, 0, 0, -0.5f, 0.5f, 0, 0, 0, 1};
+    float physical_projection[16]{
+        2.0f / float(output_width), 0, 0, -1, 0, -2.0f / float(output_height), 0, 1, 0, 0, -0.5f, 0.5f, 0, 0, 0, 1};
     float original_projection[16];
     memcpy(original_projection, physical_projection, sizeof(physical_projection));
     float observed[16]{};
@@ -203,14 +240,6 @@ static void afp_font_projection_test(IDirect3DDevice9Ex* device, IDirect3DSurfac
     hr(device->SetViewport(&full_viewport), "restore logical viewport for font projection");
     RECT full_scissor{0, 0, 3840, 2160};
     hr(device->SetScissorRect(&full_scissor), "restore logical scissor for font projection");
-
-    const bool native_rendering = gd::config.native_rendering;
-    gd::config.native_rendering = false;
-    hr(fixture_call(0, physical_projection, 4), "fixture font constants with native mode disabled");
-    hr(device->GetVertexShaderConstantF(0, observed, 4), "read fallback-mode font constants");
-    check(memcmp(observed, physical_projection, sizeof(observed)) == 0,
-          "font projection remains unchanged when NativeRendering is disabled");
-    gd::config.native_rendering = native_rendering;
 
     auto shader = make_afp_font_projection_shader(device);
     IDirect3DTexture9* atlas = nullptr;
@@ -264,8 +293,12 @@ static void afp_font_projection_test(IDirect3DDevice9Ex* device, IDirect3DSurfac
        "draw AFP-style FVF 0x142 font glyph with physical projection");
     hr(device->EndScene(), "end clipped font glyph repro");
     auto pixels = read_surface(device, logical, desc);
-    check(pixel(pixels, desc, 1625, 365) == 0x000000,
-          "physical 1080p font projection clips far-right 4K glyph before correction");
+    if (output_width == 3840 && output_height == 2160)
+        check(main_pixel(pixels, desc, 1625, 365) == 0x00ff00,
+              "4K output projection already places the far-right game glyph correctly");
+    else
+        check(main_pixel(pixels, desc, 1625, 365) == 0x000000,
+              "lower-resolution font projection clips far-right 4K glyph before correction");
 
     hr(fixture_call(0, physical_projection, 4), "fixture font projection correction at exact game return address");
     hr(device->GetVertexShaderConstantF(0, observed, 4), "read corrected font projection");
@@ -286,7 +319,7 @@ static void afp_font_projection_test(IDirect3DDevice9Ex* device, IDirect3DSurfac
     check(memcmp(glyph_quad, original_glyph.data(), sizeof(glyph_quad)) == 0,
           "projection correction leaves glyph vertex bytes unchanged");
     pixels = read_surface(device, logical, desc);
-    check(pixel(pixels, desc, 1625, 365) == 0x00ff00 && pixel(pixels, desc, 1200, 365) == 0x000000,
+    check(main_pixel(pixels, desc, 1625, 365) == 0x00ff00 && main_pixel(pixels, desc, 1200, 365) == 0x000000,
           "corrected 4K projection brings far-right dynamic text glyphs into the native canvas");
 
     hr(device->SetVertexShader(nullptr), "clear AFP font-projection shader");
@@ -295,10 +328,10 @@ static void afp_font_projection_test(IDirect3DDevice9Ex* device, IDirect3DSurfac
     shader->Release();
     gd::game = saved_game;
     gd::target::selected = saved_profile;
-    puts("PASS: AFP FVF 0x142 text projection correction, callsite gating, clipping, aux/fallback isolation");
+    puts("PASS: AFP FVF 0x142 text projection correction, callsite gating, clipping, and auxiliary-target isolation");
 }
-static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9* logical, const D3DSURFACE_DESC& desc) {
-    check(desc.Width == 1920 && desc.Height == 1080, "native main canvas has physical dimensions");
+static void main_canvas_test(IDirect3DDevice9Ex* device, IDirect3DSurface9* logical, const D3DSURFACE_DESC& desc) {
+    check(desc.Width == output_width && desc.Height == output_height, "main canvas has requested output dimensions");
     D3DVIEWPORT9 observed_viewport{};
     hr(device->GetViewport(&observed_viewport), "get viewport immediately after native canvas creation");
     check(observed_viewport.X == 0 && observed_viewport.Y == 0 && observed_viewport.Width == 3840 &&
@@ -336,11 +369,21 @@ static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9*
     block->Release();
     hr(device->GetViewport(&observed_viewport), "get viewport after state restore");
     hr(device->GetScissorRect(&observed_scissor), "get scissor after state restore");
-    check(observed_viewport.X == other_viewport.X && observed_viewport.Y == other_viewport.Y &&
-              observed_viewport.Width == other_viewport.Width && observed_viewport.Height == other_viewport.Height,
-          "state block restores viewport once in logical coordinates");
-    check(memcmp(&other_scissor, &observed_scissor, sizeof(other_scissor)) == 0,
-          "state block restores scissor once in logical coordinates");
+    D3DVIEWPORT9 expected_viewport = other_viewport;
+    RECT expected_scissor = other_scissor;
+    if (output_width == 1280) {
+        expected_viewport = {318, 216, 963, 540, 0.0f, 1.0f};
+        expected_scissor = {318, 216, 1281, 756};
+    } else if (output_width == 2560) {
+        expected_viewport = {319, 216, 962, 540, 0.0f, 1.0f};
+        expected_scissor = {319, 216, 1281, 756};
+    }
+    check(observed_viewport.X == expected_viewport.X && observed_viewport.Y == expected_viewport.Y &&
+              observed_viewport.Width == expected_viewport.Width &&
+              observed_viewport.Height == expected_viewport.Height,
+          "state block restores rationally scaled viewport bounds");
+    check(memcmp(&expected_scissor, &observed_scissor, sizeof(expected_scissor)) == 0,
+          "state block restores the enclosing logical scissor bounds for the selected scale");
 
     hr(device->SetRenderTarget(0, logical), "bind native canvas");
     viewport = {0, 0, 3840, 2160, 0.0f, 1.0f};
@@ -360,8 +403,9 @@ static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9*
     D3DRECT logical_clear{0, 0, 1920, 1080};
     hr(device->Clear(1, &logical_clear, D3DCLEAR_TARGET, 0xffff0000, 1.0f, 0), "clear logical half-size rectangle");
     auto clear_pixels = read_surface(device, logical, desc);
-    check(pixel(clear_pixels, desc, 900, 400) == 0xff0000 && pixel(clear_pixels, desc, 1200, 400) == 0x0000ff &&
-              pixel(clear_pixels, desc, 900, 700) == 0x0000ff,
+    check(main_pixel(clear_pixels, desc, 900, 400) == 0xff0000 &&
+              main_pixel(clear_pixels, desc, 1200, 400) == 0x0000ff &&
+              main_pixel(clear_pixels, desc, 900, 700) == 0x0000ff,
           "clear rectangle scales from logical to native coordinates");
     hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor for full canvas clear");
     hr(device->Clear(0, nullptr, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0), "clear native canvas black");
@@ -377,9 +421,9 @@ static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9*
     hr(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, triangle, sizeof(Vertex)), "draw projected triangle");
     hr(device->EndScene(), "end projected drawing");
     auto pixels = read_surface(device, logical, desc);
-    check(pixel(pixels, desc, 900, 200) == 0x00ff00, "logical projection reaches expected native pixel");
-    check(pixel(pixels, desc, 1200, 200) == 0x000000, "logical scissor clips projected native drawing");
-    check(pixel(pixels, desc, 480, 700) == 0x000000, "logical scissor clips projected drawing vertically");
+    check(main_pixel(pixels, desc, 900, 200) == 0x00ff00, "logical projection reaches expected native pixel");
+    check(main_pixel(pixels, desc, 1200, 200) == 0x000000, "logical scissor clips projected native drawing");
+    check(main_pixel(pixels, desc, 480, 700) == 0x000000, "logical scissor clips projected drawing vertically");
 
     // The game also submits XYZRHW vertices in its 4K screen coordinate space.
     // This FVF is 28 bytes: XYZRHW, diffuse color, and one texture coordinate.
@@ -408,12 +452,26 @@ static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9*
     check(memcmp(logical_quad, original_quad.data(), sizeof(logical_quad)) == 0,
           "native vertex scaling leaves caller vertex memory unchanged");
     pixels = read_surface(device, logical, desc);
-    check(pixel(pixels, desc, 1500, 800) == 0x00ff00 && pixel(pixels, desc, 1380, 800) == 0x000000 &&
-              pixel(pixels, desc, 1720, 800) == 0x000000,
+    check(main_pixel(pixels, desc, 1500, 800) == 0x00ff00 && main_pixel(pixels, desc, 1380, 800) == 0x000000 &&
+              main_pixel(pixels, desc, 1720, 800) == 0x000000,
           "logical XYZRHW quad maps to the lower-right native area");
-    check(pixel(pixels, desc, 1399, 800) == 0x000000 && pixel(pixels, desc, 1400, 800) == 0x00ff00 &&
-              pixel(pixels, desc, 1699, 800) == 0x00ff00 && pixel(pixels, desc, 1700, 800) == 0x000000,
-          "half-pixel mapping places transformed quad edges on native pixel boundaries");
+    struct EdgeProbe {
+        unsigned outside_left, inside_left, inside_right, outside_right, y;
+    };
+    EdgeProbe edges{};
+    if (output_width == 1280)
+        edges = {933, 934, 1133, 1134, 533};
+    else if (output_width == 1920)
+        edges = {1399, 1400, 1699, 1700, 800};
+    else if (output_width == 2560)
+        edges = {1866, 1867, 2266, 2267, 1067};
+    else
+        edges = {2800, 2801, 3400, 3401, 1600};
+    check(physical_pixel(pixels, desc, edges.outside_left, edges.y) == 0x000000 &&
+              physical_pixel(pixels, desc, edges.inside_left, edges.y) == 0x00ff00 &&
+              physical_pixel(pixels, desc, edges.inside_right, edges.y) == 0x00ff00 &&
+              physical_pixel(pixels, desc, edges.outside_right, edges.y) == 0x000000,
+          "transformed quad includes its left edge and excludes its right edge at the selected rational scale");
 
     // AFP binds its programmable vertex shader, then selects FVF 0x144 before
     // submitting these screen-space vertices. POSITIONT must still bypass the
@@ -445,7 +503,7 @@ static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9*
     check(memcmp(logical_quad, original_quad.data(), sizeof(logical_quad)) == 0,
           "AFP-style shader draw leaves submitted text vertices unchanged");
     pixels = read_surface(device, logical, desc);
-    check(pixel(pixels, desc, 1500, 800) == 0x00ff00 && pixel(pixels, desc, 1200, 800) == 0x000000,
+    check(main_pixel(pixels, desc, 1500, 800) == 0x00ff00 && main_pixel(pixels, desc, 1200, 800) == 0x000000,
           "bound vertex shader preserves native XYZRHW text-quad placement and clipping");
     hr(device->SetVertexShader(nullptr), "clear AFP-style vertex shader after test");
     afp_shader->Release();
@@ -482,7 +540,7 @@ static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9*
               memcmp(logical_line, original_line.data(), sizeof(logical_line)) == 0,
           "20-byte XYZRHW scaling leaves caller vertex memory unchanged");
     pixels = read_surface(device, logical, desc);
-    check(pixel(pixels, desc, 1150, 550) == 0x00ff00 && pixel(pixels, desc, 1500, 900) == 0xffff00,
+    check(main_pixel(pixels, desc, 1150, 550) == 0x00ff00 && main_pixel(pixels, desc, 1500, 900) == 0xffff00,
           "20-byte triangle and line list map from logical to native coordinates");
 
     // Auxiliary targets retain their original sizes and unscaled D3D state.
@@ -529,9 +587,9 @@ static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9*
        "draw unscaled auxiliary XYZRHW triangle");
     hr(device->EndScene(), "end auxiliary transformed drawing");
     auto auxiliary_pixels = read_surface(device, auxiliary, auxiliary_desc);
-    check(pixel(auxiliary_pixels, auxiliary_desc, 160, 120) == 0xff0000 &&
-              pixel(auxiliary_pixels, auxiliary_desc, 70, 70) == 0x00ff00 &&
-              pixel(auxiliary_pixels, auxiliary_desc, 80, 30) == 0xffff00,
+    check(physical_pixel(auxiliary_pixels, auxiliary_desc, 160, 120) == 0xff0000 &&
+              physical_pixel(auxiliary_pixels, auxiliary_desc, 70, 70) == 0x00ff00 &&
+              physical_pixel(auxiliary_pixels, auxiliary_desc, 80, 30) == 0xffff00,
           "auxiliary clear and 20/28-byte transformed vertices remain unscaled");
     auxiliary->Release();
 
@@ -582,9 +640,26 @@ static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9*
     check(physical != nullptr, "native physical backbuffer available");
     D3DSURFACE_DESC physical_desc{};
     hr(physical->GetDesc(&physical_desc), "describe native physical output");
-    check(physical_desc.Width == 1920 && physical_desc.Height == 1080, "native output remains 1080p");
+    check(physical_desc.Width == output_width && physical_desc.Height == output_height,
+          "native output retains the requested dimensions");
     const auto physical_pixels = read_surface(device, physical, physical_desc);
     check(physical_pixels == pixels, "native composition copies the complete main canvas without auxiliary leakage");
+    hr(device->ColorFill(physical, nullptr, 0xffff0000), "diagnostic snapshot solid red");
+    check(gd::save_surface_bmp(device, physical, L"diagnostic-test.bmp"), "save diagnostic BMP");
+    {
+        std::ifstream bmp("diagnostic-test.bmp", std::ios::binary);
+        BITMAPFILEHEADER header{};
+        BITMAPINFOHEADER info{};
+        unsigned char first_pixel[3]{};
+        bmp.read(reinterpret_cast<char*>(&header), sizeof(header));
+        bmp.read(reinterpret_cast<char*>(&info), sizeof(info));
+        bmp.read(reinterpret_cast<char*>(first_pixel), sizeof(first_pixel));
+        check(header.bfType == 0x4d42 && info.biWidth == LONG(output_width) && info.biHeight == -LONG(output_height) &&
+                  info.biBitCount == 24,
+              "capture BMP dimensions and orientation match selected output");
+        check(first_pixel[0] == 0 && first_pixel[1] == 0 && first_pixel[2] == 255,
+              "capture BMP stores BGR red and ignores alpha");
+    }
     physical->Release();
 }
 static void scaling_test(IDirect3DDevice9Ex* device) {
@@ -592,9 +667,8 @@ static void scaling_test(IDirect3DDevice9Ex* device) {
     hr(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &logical), "logical backbuffer");
     D3DSURFACE_DESC desc{};
     hr(logical->GetDesc(&desc), "logical description");
-    check(desc.Width == (gd::config.native_rendering ? 1920u : 3840u) &&
-              desc.Height == (gd::config.native_rendering ? 1080u : 2160u),
-          gd::config.native_rendering ? "native mode exposes 1080p main canvas" : "game sees 4K canvas");
+    check(desc.Width == output_width && desc.Height == output_height,
+          "main canvas has requested native output dimensions");
     IDirect3DSwapChain9* chain = nullptr;
     hr(device->GetSwapChain(0, &chain), "get main swapchain");
     IDirect3DSurface9* chain_surface = nullptr;
@@ -602,55 +676,9 @@ static void scaling_test(IDirect3DDevice9Ex* device) {
     check(chain_surface == logical, "device and swapchain return same logical canvas");
     chain_surface->Release();
     chain->Release();
-    if (gd::config.native_rendering) {
-        native_rendering_test(device, logical, desc);
-        logical->Release();
-        puts("PASS: native 1080p target projection, clipping, state blocks, auxiliary target isolation");
-        return;
-    }
-    hr(device->SetRenderTarget(0, logical), "set logical target");
-    const D3DCOLOR colors[]{0xffff0000, 0xff00ff00, 0xff0000ff, 0xffffffff};
-    for (int quadrant = 0; quadrant < 4; ++quadrant) {
-        D3DRECT rect{(quadrant % 2) * 1920, (quadrant / 2) * 1080, (quadrant % 2 + 1) * 1920,
-                     (quadrant / 2 + 1) * 1080};
-        hr(device->Clear(1, &rect, D3DCLEAR_TARGET, colors[quadrant], 1, 0), "paint quadrant");
-    }
-    check(gd::compose(), "downsample to physical backbuffer");
-    auto physical = gd::physical_backbuffer();
-    check(physical != nullptr, "physical backbuffer available");
-    hr(physical->GetDesc(&desc), "physical description");
-    check(desc.Width == 1920 && desc.Height == 1080, "output is 1080p");
-    hr(device->ColorFill(physical, nullptr, 0xffff0000), "diagnostic snapshot solid red");
-    check(gd::save_surface_bmp(device, physical, L"diagnostic-test.bmp"), "save diagnostic BMP");
-    {
-        std::ifstream bmp("diagnostic-test.bmp", std::ios::binary);
-        BITMAPFILEHEADER header{};
-        BITMAPINFOHEADER info{};
-        unsigned char pixel[3]{};
-        bmp.read(reinterpret_cast<char*>(&header), sizeof(header));
-        bmp.read(reinterpret_cast<char*>(&info), sizeof(info));
-        bmp.read(reinterpret_cast<char*>(pixel), sizeof(pixel));
-        check(header.bfType == 0x4d42 && info.biWidth == 1920 && info.biHeight == -1080 && info.biBitCount == 24,
-              "capture BMP dimensions and orientation");
-        check(pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 255, "capture BGR red pixel ignores alpha");
-    }
-    check(gd::compose(), "restore quadrants after snapshot verification");
-    IDirect3DSurface9* readable = nullptr;
-    hr(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, &readable, nullptr),
-       "readback surface");
-    hr(device->GetRenderTargetData(physical, readable), "readback");
-    D3DLOCKED_RECT lock{};
-    hr(readable->LockRect(&lock, nullptr, D3DLOCK_READONLY), "lock readback");
-    for (int quadrant = 0; quadrant < 4; ++quadrant) {
-        const unsigned x = (quadrant % 2) * 960 + 480, y = (quadrant / 2) * 540 + 270;
-        auto row = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(lock.pBits) + y * lock.Pitch);
-        check((row[x] & 0xffffff) == (colors[quadrant] & 0xffffff), "quadrant survives downsampling without cropping");
-    }
-    readable->UnlockRect();
-    readable->Release();
-    physical->Release();
+    main_canvas_test(device, logical, desc);
     logical->Release();
-    puts("PASS: device/swapchain 4K canvas -> 1080p output, four corner colors verified");
+    puts("PASS: native output projection, clipping, state blocks, BMP, and auxiliary target isolation");
 }
 static void direct_backbuffer_present_test(IDirect3DDevice9Ex* device, D3DSWAPEFFECT expected_effect,
                                            UINT expected_backbuffer_count) {
@@ -659,7 +687,7 @@ static void direct_backbuffer_present_test(IDirect3DDevice9Ex* device, D3DSWAPEF
     D3DPRESENT_PARAMETERS parameters{};
     hr(chain->GetPresentParameters(&parameters), "get effective direct swapchain parameters");
     check(parameters.SwapEffect == expected_effect && parameters.BackBufferCount == expected_backbuffer_count &&
-              parameters.BackBufferWidth == 1920 && parameters.BackBufferHeight == 1080 &&
+              parameters.BackBufferWidth == output_width && parameters.BackBufferHeight == output_height &&
               parameters.MultiSampleType == D3DMULTISAMPLE_NONE,
           "direct path fixture uses its native-size swap effect with non-MSAA buffers");
     chain->Release();
@@ -676,9 +704,9 @@ static void direct_backbuffer_present_test(IDirect3DDevice9Ex* device, D3DSWAPEF
     hr(canvas->GetDesc(&desc), "describe direct canvas");
     D3DSURFACE_DESC physical_desc{};
     hr(physical->GetDesc(&physical_desc), "describe direct physical backbuffer");
-    check(desc.Width == 1920 && desc.Height == 1080 && physical_desc.Width == desc.Width &&
+    check(desc.Width == output_width && desc.Height == output_height && physical_desc.Width == desc.Width &&
               physical_desc.Height == desc.Height,
-          "direct canvas and physical backbuffer retain native 1080p dimensions");
+          "direct canvas and physical backbuffer retain requested dimensions");
 
     IDirect3DSurface9* auxiliary = nullptr;
     hr(device->CreateRenderTarget(320, 240, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &auxiliary, nullptr),
@@ -769,7 +797,7 @@ static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, 
     }
     gd::game = reinterpret_cast<HMODULE>(image);
     check(fps >= 60, "supported verification FPS");
-    gd::config.fps = gd::config.refresh = fps;
+    gd::config.refresh = fps;
     gd::config.diagnostics = true;
     gd::config.disable_live2d = disable_live2d;
     gd::config.disable_side_compositing = disable_side_compositing;
@@ -990,7 +1018,7 @@ static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, 
 }
 static void dump_timing_sites() {
     gd::target::select(gd::target::supported[0]->sha256);
-    gd::config.fps = 240;
+    gd::config.refresh = 240;
     gd::config.animation_timing = 2;
     const auto& p = gd::target::get();
     bool first = true;
@@ -1045,6 +1073,10 @@ int wmain(int argc, wchar_t** argv) {
             note_config_test();
             return 0;
         }
+        if (argc == 2 && wcscmp(argv[1], L"--test-output-resolutions") == 0) {
+            output_resolution_config_test();
+            return 0;
+        }
         if (argc == 2 && wcscmp(argv[1], L"--test-note-rendering") == 0) {
             note_rendering_test();
             return 0;
@@ -1078,7 +1110,7 @@ int wmain(int argc, wchar_t** argv) {
             animation_clock_test();
             return 0;
         }
-        if ((argc >= 3 && argc <= 6) && wcscmp(argv[1], L"--check-config") == 0) {
+        if ((argc >= 3 && argc <= 5) && wcscmp(argv[1], L"--check-config") == 0) {
             wchar_t path[MAX_PATH];
             GetModuleFileNameW(nullptr, path, MAX_PATH);
             if (auto slash = wcsrchr(path, L'\\'))
@@ -1086,20 +1118,15 @@ int wmain(int argc, wchar_t** argv) {
             wcscat_s(path, L"gd-arena-fix.ini");
             auto selected = gd::read_config(path);
             const auto expected = wcstoul(argv[2], nullptr, 10);
-            printf("Native config: %ux%u @ %u; target FPS %u; DisableLive2D=%d; NativeRendering=%d; "
-                   "DisableSideCompositing=%d\n",
-                   selected.width, selected.height, selected.refresh, selected.fps, selected.disable_live2d,
-                   selected.native_rendering, selected.disable_side_compositing);
-            check(selected.refresh == expected && selected.fps == expected && gd::valid_config(selected),
+            printf("Config: %ux%u @ %u Hz; DisableLive2D=%d; DisableSideCompositing=%d\n", selected.width,
+                   selected.height, selected.refresh, selected.disable_live2d, selected.disable_side_compositing);
+            check(selected.refresh == expected && gd::valid_config(selected),
                   "requested mode reaches native config reader");
             if (argc >= 4)
                 check(selected.disable_live2d == (wcstoul(argv[3], nullptr, 10) != 0),
                       "INI Live2D preference reaches native reader");
             if (argc >= 5)
-                check(selected.native_rendering == (wcstoul(argv[4], nullptr, 10) != 0),
-                      "INI NativeRendering preference reaches native reader");
-            if (argc == 6)
-                check(selected.disable_side_compositing == (wcstoul(argv[5], nullptr, 10) != 0),
+                check(selected.disable_side_compositing == (wcstoul(argv[4], nullptr, 10) != 0),
                       "side-compositing preference reaches native config reader");
             puts("PASS: native INI configuration");
             return 0;
@@ -1109,19 +1136,32 @@ int wmain(int argc, wchar_t** argv) {
                 argv[2], argc >= 4 && wcstoul(argv[3], nullptr, 10) != 0,
                 argc >= 5 ? wcstoul(argv[4], nullptr, 10) : 120, argc >= 6 ? wcstoul(argv[5], nullptr, 10) : 2,
                 argc >= 7 && wcstoul(argv[6], nullptr, 10) != 0, argc >= 8 && wcstoul(argv[7], nullptr, 10) != 0);
-        if (argc == 2 && (wcscmp(argv[1], L"--native-rendering") == 0 || wcscmp(argv[1], L"--native-direct") == 0 ||
-                          wcscmp(argv[1], L"--native-direct-copy") == 0)) {
-            gd::config.native_rendering = true;
+        if (argc >= 2 && wcscmp(argv[1], L"--rendering") == 0) {
+            check(argc == 4 || argc == 5, "usage: --rendering WIDTH HEIGHT [discard|copy|flip]");
+            output_width = gd::config.width = wcstoul(argv[2], nullptr, 10);
+            output_height = gd::config.height = wcstoul(argv[3], nullptr, 10);
+            check(gd::valid_config(gd::config), "requested output resolution is supported");
+            if (argc == 5) {
+                if (wcscmp(argv[4], L"copy") == 0)
+                    native_smoke_effect = D3DSWAPEFFECT_COPY;
+                else if (wcscmp(argv[4], L"flip") == 0)
+                    native_smoke_effect = D3DSWAPEFFECT_FLIP;
+                else
+                    check(wcscmp(argv[4], L"discard") == 0, "swap effect is discard, copy, or flip");
+            }
+            printf("Direct3D smoke mode: %ux%u (%s)\n", output_width, output_height,
+                   native_smoke_effect == D3DSWAPEFFECT_COPY   ? "copy"
+                   : native_smoke_effect == D3DSWAPEFFECT_FLIP ? "flip"
+                                                               : "discard");
+        } else if (argc == 2 &&
+                   (wcscmp(argv[1], L"--native-rendering") == 0 || wcscmp(argv[1], L"--native-direct") == 0 ||
+                    wcscmp(argv[1], L"--native-direct-copy") == 0)) {
             if (wcscmp(argv[1], L"--native-direct") == 0)
                 native_smoke_effect = D3DSWAPEFFECT_FLIP;
             else if (wcscmp(argv[1], L"--native-direct-copy") == 0)
                 native_smoke_effect = D3DSWAPEFFECT_COPY;
-            if (native_smoke_effect == D3DSWAPEFFECT_FLIP)
-                puts("NativeRendering direct-FLIP smoke path enabled for this process");
-            else if (native_smoke_effect == D3DSWAPEFFECT_COPY)
-                puts("NativeRendering direct-COPY smoke path enabled for this process");
-            else
-                puts("NativeRendering intermediate-canvas smoke path enabled for this process");
+            output_width = gd::config.width;
+            output_height = gd::config.height;
         }
         gd::FractionalTicks ticks;
         unsigned total = 0;
@@ -1140,11 +1180,11 @@ int wmain(int argc, wchar_t** argv) {
         for (UINT i = 0; i < count; ++i) {
             D3DDISPLAYMODEEX mode{};
             mode.Size = sizeof(mode);
-            if (SUCCEEDED(factory->EnumAdapterModesEx(0, &filter, i, &mode)) && mode.Width == 1920 &&
-                mode.Height == 1080 && mode.RefreshRate == 120)
+            if (SUCCEEDED(factory->EnumAdapterModesEx(0, &filter, i, &mode)) && mode.Width == output_width &&
+                mode.Height == output_height && mode.RefreshRate == 120)
                 supports120 = true;
         }
-        printf("Native adapter 0 enumerates 1920x1080@120: %s\n", supports120 ? "YES" : "NO");
+        printf("Native adapter 0 enumerates %ux%u@120: %s\n", output_width, output_height, supports120 ? "YES" : "NO");
         gd::wrap_factory(factory);
         HWND window = CreateWindowExW(0, L"STATIC", L"gd-arena-fix hidden smoke test", WS_OVERLAPPEDWINDOW, 0, 0, 640,
                                       480, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);

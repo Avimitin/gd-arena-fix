@@ -26,14 +26,11 @@ hashing, allocation, and hook installation run on the first D3D call outside
 loader lock. The original factory is retained to preserve spice2x's wrapper.
 The DLL is pinned once active; hot unloading is unsupported.
 
-The main output uses 1920Ã—1080 presentation parameters, while the game sees
-a separate 3840Ã—2160 render target through device and main-swapchain
-GetBackBuffer calls. Immediately before the game's presentation callback,
-the mod uses StretchRect to downsample that canvas. Reset and ResetEx
-recreate it. Auxiliary render targets retain their original dimensions.
-With `NativeRendering=0`, this does not provide native-1080p rendering savings.
-The default `NativeRendering=1` path renders the main canvas at 1920x1080,
-retains logical coordinates and reuses compatible physical backbuffers. See
+The main canvas and presentation use the configured output dimensions while
+game layout coordinates remain 3840x2160. Device and main-swapchain GetBackBuffer
+calls expose the native canvas. Compatible swap chains reuse the physical
+backbuffer; others use a same-size canvas and output copy. Reset and ResetEx
+recreate it. Auxiliary render targets retain their original dimensions. See
 [Native rendering](native-rendering.md) for coordinate handling and limitations.
 
 COM hooks replace individual slots in the shared vtable and retain the
@@ -47,14 +44,14 @@ are cached; device state still comes from D3D, including after state blocks.
 The game's 4K main window uses D3DCREATE_NOWINDOWCHANGES. Its mouse/touch
 handler normalizes positions with GetClientRect, so resizing only the
 backbuffer can restrict pointer reach to half the logical range. The mod
-fits the main client to 1080p on device creation and reset. Fullscreen is
+fits the main client to the selected output size on device creation and reset. Fullscreen is
 positioned at the selected monitor's origin. Windows can constrain a
 decorated window; presentation and input use its actual client size.
 Auxiliary input windows are not resized.
 
 ## Frame timing
 
-At 60 FPS the original timing logic is retained. Above 60 FPS the mod:
+With `Refresh=60` the original timing logic is retained. Above 60 Hz the mod:
 
 - Removes the normal frame's 14 ms wait at `0x1801A39F1`, retaining display synchronization.
 - Measures elapsed time in the normal-frame hook at `0x1801A3910`.

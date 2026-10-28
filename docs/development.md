@@ -89,13 +89,13 @@ coverage, remaining paths and the reproducible scanner.
 ## GitHub Actions
 
 `.github/workflows/build.yml` runs only on tag pushes using `windows-2022`.
-It checks formatting, builds with CMake, runs CTest, packages both
-ZIPs, and uploads the ZIPs and checksums as separate artifacts with 30-day
-retention. After all checks pass, it also uploads both ZIPs and
+It checks formatting, builds with CMake, runs CTest, packages the binary ZIP,
+and uploads it with the checksum as separate artifacts with 30-day retention.
+After all checks pass, it also uploads the binary ZIP and
 `SHA256SUMS.txt` to the pushed tag's GitHub Release, creating the release if
 needed. Actions are pinned to commits. The workflow uses the built-in
-`GITHUB_TOKEN` with `contents: write` permission to publish release assets;
-no additional secret is needed.
+`GITHUB_TOKEN` with `contents: write` permission to publish the binary ZIP and
+checksum; no additional secret is needed.
 
 Before tagging a release, update `VERSION` in `package.py` to match the
 release version, since that value determines the ZIP filenames.
@@ -105,38 +105,40 @@ the supported game image or a suitable graphics environment.
 
 ## Local checks
 
-On a fresh build, check the public 120 Hz / 120 FPS defaults without starting
-the game:
+On a fresh build, check the public 120 Hz Refresh default and supported
+output sizes without starting the game:
 
 ```powershell
-.\dist\gd-arena-fix-test.exe --check-config 120 0
+.\dist\gd-arena-fix-test.exe --check-config 120 1 1
+.\dist\gd-arena-fix-test.exe --test-output-resolutions
 ```
 
-The final argument is the expected `DisableLive2D` value. An optional fourth
-argument checks the expected `NativeRendering` value (`0` or `1`). This check uses
-the same INI reader as the DLL. `GDMOD_<field>` environment variables override
-the corresponding INI values; clear them when checking file-only defaults.
+The check-config arguments after the command are expected Refresh in Hz,
+`DisableLive2D`, and `DisableSideCompositing`. The resolution check covers
+1280x720, 1920x1080, 2560x1440, and 3840x2160, and rejects unsupported sizes.
+Both use the same configuration validation as the DLL. `GDMOD_<field>`
+environment variables override corresponding INI values; clear them when
+checking file-only defaults.
 
-Run the native graphics checks on a machine with a Direct3D 9Ex adapter:
+Run the graphics checks on a machine with a Direct3D 9Ex adapter. Use one
+invocation for each output size:
 
 ```powershell
 .\dist\gd-arena-fix-test.exe
-.\dist\gd-arena-fix-test.exe --native-rendering
-.\dist\gd-arena-fix-test.exe --native-direct
-.\dist\gd-arena-fix-test.exe --native-direct-copy
+.\dist\gd-arena-fix-test.exe --rendering 1280 720 discard
+.\dist\gd-arena-fix-test.exe --rendering 1920 1080 discard
+.\dist\gd-arena-fix-test.exe --rendering 2560 1440 discard
+.\dist\gd-arena-fix-test.exe --rendering 3840 2160 discard
 ```
 
-This checks fractional timing arithmetic, unsupported-image rejection,
-device/swapchain access to the logical 4K canvas, four-quadrant downsampling,
-BMP color and format, reset behavior, and main-window input dimensions.
-The native-rendering invocation also checks projected and screen-space drawing,
-clipping, state restoration and auxiliary-target isolation at 1080p.
-The native-direct invocation additionally checks backbuffer reuse across
-two-buffer FLIP presentation and reset, including font projection.
-The native-direct-copy invocation checks the same behavior with COPY and one
-backbuffer.
-A hidden fullscreen-style window verifies pointer normalization and monitor
-placement; it is not an actual fullscreen game test.
+These checks cover fractional timing, unsupported-image rejection, logical 4K
+coordinates on the requested native canvas, projected and screen-space drawing,
+clipping, state restoration, auxiliary-target isolation, BMP color and format,
+reset behavior, and input dimensions. The optional final argument selects
+`discard`, `copy`, or `flip`; `copy` and `flip` also check direct backbuffer
+reuse across presentation and reset. A hidden fullscreen-style window checks
+pointer normalization and monitor placement; it is not an actual fullscreen
+game test. CTest remains headless and does not run graphics checks.
 
 The game-image check maps file-backed sections without loading the game's
 dependencies. Supply your own supported `gdxg.dll`:
@@ -145,7 +147,8 @@ dependencies. Supply your own supported `gdxg.dll`:
 .\dist\gd-arena-fix-test.exe --verify-image 'C:\path\to\gdxg.dll' 1 120
 ```
 
-The trailing arguments are `DisableLive2D` (`0`/`1`), FPS (e.g. `60`/`120`/`144`/`240`),
+The trailing arguments are `DisableLive2D` (`0`/`1`), Refresh in Hz
+(e.g. `60`/`120`/`144`/`240`),
 `AnimationTiming` (`0`/`1`/`2`, default `2`), `DisableSideCompositing` (`0`/`1`),
 and `NoteSmoothing` (`0`/`1`). The last two default to `0` in this test command.
 For note smoothing, use `--verify-image 'C:\path\to\gdxg.dll' 1 120 2 0 1`.
@@ -162,7 +165,7 @@ sprite updater. A substitute draw function observes fractional movement and
 alpha without a graphics device. These tests check callback frequency,
 pose restoration, manual overrides, stopped animations, native register
 preservation and avoidance of double throttling. Modes `0`, `1`, `2` and
-the 60 FPS path should all be checked after animation changes.
+the `Refresh=60` path should all be checked after animation changes.
 
 `--test-animation-clock` checks elapsed-time accumulation at several render
 rates, jitter, inactive objects and bounded catch-up without a game image.
@@ -171,7 +174,7 @@ This arithmetic check also runs in CI. Detailed scope is in
 
 `--test-timing` checks configuration and elapsed-time clocks at 60/90/120/144/
 240/360 Hz, duplicates, pauses, stalls and inactive scenes without a game image.
-It also runs in CI. Above 60 FPS, `--verify-image` executes the native menu
+It also runs in CI. Above `Refresh=60`, `--verify-image` executes the native menu
 countdown aliases, reset/clear functions, audio sampler, cursor lookup and song
 filter using synthetic state. The timed-play wrapper uses a substitute callback
 for its unrelated frame work. Run at 120/144/240 with animation modes 0/1/2 after
@@ -179,7 +182,7 @@ clock changes. See [Timing](timing.md) for exact coverage and hardware limits.
 
 ## Diagnostics
 
-Above 60 FPS, song-list and category readiness use each asset's `[loop, move)` label interval
+Above `Refresh=60`, song-list and category readiness use each asset's `[loop, move)` label interval
 instead of requiring a poll at one exact frame. AFP executes intermediate
 actions during catch-up, but C++ sees only the final position; missing the
 `loop` frame otherwise leaves a queued scroll permanently busy. Label lookup
@@ -198,8 +201,8 @@ speed scalar, and two fade-option flags. Post-judgment notes are counted
 separately. Zero counts do not establish that all notes are opaque; these
 hooks do not cover DrumMania's note path.
 
-With the game focused, Ctrl+Shift+F8 saves paired 4K and 1080p BMPs from the
-same frame before presentation. GPU readback can briefly stall rendering.
+With the game focused, Ctrl+Shift+F8 saves paired canvas and output BMPs from
+the same frame before presentation. GPU readback can briefly stall rendering.
 Compare a low fall speed with the speed at which faintness appears on the
 same chart, using the same visibility settings. The capture test verifies
 24-bit BGR output and ignores alpha when writing the BMP.

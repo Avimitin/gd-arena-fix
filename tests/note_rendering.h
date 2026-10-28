@@ -99,7 +99,7 @@ static void note_rendering_test() {
         ~Restore() {
             gd::config.note_smoothing = smoothing;
             gd::config.diagnostics = diagnostics;
-            gd::config.fps = fps;
+            gd::config.refresh = fps;
             if (have_hooks) {
                 for (size_t i = 0; i < original.size(); ++i)
                     if (slots[i])
@@ -110,7 +110,7 @@ static void note_rendering_test() {
             gd::end_scene_frame();
         }
     } restore{
-        gd::config.note_smoothing, gd::config.diagnostics, gd::config.fps, {}, {}, gd::target::selected, gd::game};
+        gd::config.note_smoothing, gd::config.diagnostics, gd::config.refresh, {}, {}, gd::target::selected, gd::game};
 
     gd::target::select(gd::target::supported[0]->sha256);
     gd::target::Profile fixture_profile = gd::target::get();
@@ -125,19 +125,19 @@ static void note_rendering_test() {
     // the two render hooks for smoothing above 60 Hz.
     gd::config.diagnostics = false;
     gd::config.note_smoothing = false;
-    gd::config.fps = 60;
+    gd::config.refresh = 60;
     check(gd::note_diagnostic_hooks().empty(), "disabled smoothing and diagnostics install no note hooks");
     gd::config.note_smoothing = true;
-    gd::config.fps = 120;
+    gd::config.refresh = 120;
     check(gd::note_diagnostic_hooks().size() == 2, "high-FPS smoothing installs batch and position hooks only");
-    gd::config.fps = 60;
+    gd::config.refresh = 60;
     check(gd::note_diagnostic_hooks().empty(), "60 FPS smoothing does not install note hooks");
     gd::config.note_smoothing = false;
     gd::config.diagnostics = true;
     check(gd::note_diagnostic_hooks().size() == 3, "60 FPS diagnostics retain all three observer hooks");
     gd::config.diagnostics = false;
     gd::config.note_smoothing = true;
-    gd::config.fps = 120;
+    gd::config.refresh = 120;
     const auto hooks = gd::note_diagnostic_hooks();
     check(hooks.size() == 2, "smoothing-only note hooks expose batch and position");
     for (size_t i = 0; i < hooks.size(); ++i) {
@@ -187,7 +187,7 @@ static void note_rendering_test() {
     };
 
     // The opt-in switch is inert when disabled, even inside a matched batch.
-    gd::config.fps = 120;
+    gd::config.refresh = 120;
     gd::config.note_smoothing = false;
     gd::begin_timing_frame(1.0 / 120.0);
     auto seen = run_batch(0, 1.0f, mode, skin);
@@ -246,7 +246,7 @@ static void note_rendering_test() {
           "unlisted C++ caller is never smoothed");
 
     // The feature remains gated at the native 60 Hz mode.
-    gd::config.fps = 60;
+    gd::config.refresh = 60;
     gd::begin_timing_frame(1.0 / 60.0);
     seen = run_batch(0, p0_time, mode, skin);
     check(seen.first == 100.25f && seen.second == 201.75f, "60 FPS disables note smoothing");

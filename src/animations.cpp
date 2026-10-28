@@ -403,7 +403,7 @@ bool animation_predicate(void* object, int frame, uintptr_t consumer) {
 }
 
 void begin_animation_frame() {
-    state.active = scene_frame().active && config.fps > 60 && config.animation_timing != 0;
+    state.active = scene_frame().active && config.refresh > 60 && config.animation_timing != 0;
     if (!state.active)
         return;
     if (scene_frame().serial % 600 == 0) {
@@ -418,7 +418,7 @@ void end_animation_frame() {
     state.active = false;
 }
 void report_animations() {
-    if (config.fps <= 60 || !config.animation_timing)
+    if (config.refresh <= 60 || !config.animation_timing)
         return;
     log("Animations: native ticks %llu, held updates %llu, interpolated draws %llu, sprite ticks %llu", state.updates,
         state.holds, state.interpolated, state.sprite_updates);

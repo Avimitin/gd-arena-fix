@@ -19,31 +19,26 @@ void initialize() {
         *dot = 0;
     wcscat_s(ini, L".ini");
     config = read_config(ini);
-    log("Config file: %ls", ini);
+    log("Config file: %ls; requested output %ux%u @ %u Hz", ini, config.width, config.height, config.refresh);
     if (!valid_config(config))
-        throw std::runtime_error("unsupported settings (1920x1080, FPS >= 60, Refresh=FPS)");
+        throw std::runtime_error("unsupported settings (1280x720, 1920x1080, 2560x1440 or 3840x2160; Refresh >= 60)");
     if (config.animation_timing > 2)
         throw std::runtime_error("AnimationTiming must be 0, 1 or 2");
     if (!validate_game(game))
         throw std::runtime_error("unsupported gdxg.dll hash; no game patches installed");
-    if (config.native_rendering) {
-        const auto& site = target::get().font_projection_constants;
-        if (std::memcmp(at(site.address), site.signature.storage.data(), site.signature.length) != 0) {
-            config.native_rendering = false;
-            log("NativeRendering disabled: font projection signature mismatch; using 3840x2160 fallback");
-        }
-    }
-    log("gd-arena-fix 0.1.9: %ux%u @ %u; target FPS %u; native main rendering %s", config.width, config.height,
-        config.refresh, config.fps, config.native_rendering ? "enabled (experimental)" : "disabled");
+    const auto& site = target::get().font_projection_constants;
+    if (std::memcmp(at(site.address), site.signature.storage.data(), site.signature.length) != 0)
+        throw std::runtime_error("font projection signature mismatch; native rendering cannot initialize");
+    log("gd-arena-fix 0.1.10: %ux%u @ %u Hz; native main rendering", config.width, config.height, config.refresh);
     install_timing_and_present();
     // No hot unload: COM tables and trampolines must remain valid for process life.
     HMODULE pinned = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                        reinterpret_cast<LPCWSTR>(&initialize), &pinned);
     active = true;
-    log("Hooks installed. Main logical coordinates: 3840x2160; render target: %s. Runtime gameplay validation is "
+    log("Hooks installed. Main logical coordinates: 3840x2160; render target: %ux%u. Runtime gameplay validation is "
         "required.",
-        config.native_rendering ? "1920x1080" : "3840x2160");
+        config.width, config.height);
 }
 static HRESULT WINAPI create9ex(UINT version, IDirect3D9Ex** output) {
     std::call_once(initialization, [] {

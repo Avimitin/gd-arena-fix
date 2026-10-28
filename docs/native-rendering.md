@@ -1,8 +1,16 @@
-# Native 1080p rendering
+# Native output rendering
 
-`NativeRendering=1` renders the main output at 1920x1080 while preserving
-3840x2160 logical coordinates. `0` keeps the original 4K target and downsample.
+The main canvas always renders at the configured output size: 1280x720,
+1920x1080, 2560x1440 or 3840x2160. Game layout coordinates remain 3840x2160.
 Textures, auxiliary outputs and intermediate targets retain their sizes.
+The obsolete `NativeRendering` and `FPS` INI keys and environment overrides are
+ignored. `Refresh` requests the fullscreen display rate and selects high-refresh
+timing corrections above 60 Hz. There is no separate software frame limiter;
+presentation uses VSync, subject to Spice overrides and desktop composition.
+Resolution validation is independent of the timing hooks; every supported size
+uses the same elapsed-time timers, animations and song-anchored note smoothing.
+Fullscreen mode availability is checked by Direct3D device creation/reset;
+failures retain the requested dimensions and HRESULT in the log.
 
 `DisableSideCompositing=1` skips three guarded video/effect compositing blocks
 for the unused LEFT/RIGHT cabinet screens. This removes up to four surface copies
@@ -24,8 +32,11 @@ renderer builds its projection from the physical target description, so its
 profile-guarded constant upload is corrected to use the logical dimensions.
 With matching, non-MSAA FLIP or COPY swap chains, the main canvas reuses the
 physical backbuffer. This removes the final full-screen copy and an additional
-7.9 MiB render target. Other swap effects retain a separate native-size canvas
+output-sized render target. Other swap effects retain a separate native-size canvas
 and output copy. Reset releases and reacquires the backbuffer reference.
+At 3840x2160, screen-space vertex conversion bypasses scratch copies because
+the logical and physical pixel grids are identical. Font projection signature
+mismatches reject initialization instead of falling back to 4K rendering.
 
 ## Binary evidence
 
@@ -67,12 +78,12 @@ IDA evidence from the supported `gdxg.dll`:
 The graphics smoke test covers projected drawing, screen-space sprites and
 lines, font projection, clipping, state restoration, auxiliary-target isolation,
 output copies, direct backbuffer identity across PresentEx, and ResetEx.
-Native rendering remains opt-in; these checks do not establish visual correctness
-throughout the game.
+These checks do not establish visual correctness throughout the game.
 Buffered XYZRHW and indexed user-pointer draws are not converted; the confirmed
 AFP screen-space paths use non-indexed user-pointer draws. Broader live coverage
 of movies, Live2D, other renderers and fullscreen transitions is still needed.
 
-The main target has 75% fewer pixels, but CPU work and auxiliary rendering
-remain. Existing timing logs measure CPU submission rather than GPU execution;
+Compared with 4K, the main target has about 89% fewer pixels at 720p, 75% fewer
+at 1080p and 56% fewer at 1440p. CPU work and auxiliary rendering remain.
+Existing timing logs measure CPU submission rather than GPU execution;
 a stable 120 FPS or a specific speedup on weaker hardware is not guaranteed.

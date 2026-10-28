@@ -22,10 +22,8 @@ static void timing_math_test() {
     gd::target::selected = saved_profile;
     for (unsigned hz : {60U, 90U, 120U, 144U, 240U, 360U}) {
         gd::Config cfg;
-        cfg.fps = cfg.refresh = hz;
+        cfg.refresh = hz;
         check(gd::valid_config(cfg), "matching high-refresh configuration accepted");
-        cfg.refresh = hz + 1;
-        check(!gd::valid_config(cfg), "mismatched FPS and refresh still rejected");
         gd::ElapsedCounter seconds, play;
         gd::FractionalTicks chart;
         seconds.reset(1);

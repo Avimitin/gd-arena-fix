@@ -39,7 +39,7 @@ static unsigned logical_width = 3840, logical_height = 2160;
 static std::vector<IDirect3DSwapChain9*> main_chains;
 static thread_local bool internal_call = false;
 static bool native_target(IDirect3DDevice9Ex* object) {
-    return config.native_rendering && object == device && canvas_bound;
+    return object == device && canvas_bound;
 }
 static int64_t floor_ratio(int64_t value, unsigned numerator, unsigned denominator) {
     const int64_t scaled = value * numerator;
@@ -130,8 +130,8 @@ static bool make_canvas() {
         physical->Release();
         return false;
     }
-    const unsigned canvas_width = config.native_rendering ? desc.Width : logical_width;
-    const unsigned canvas_height = config.native_rendering ? desc.Height : logical_height;
+    const unsigned canvas_width = desc.Width;
+    const unsigned canvas_height = desc.Height;
     if (desc.Width != config.width || desc.Height != config.height || desc.MultiSampleType != D3DMULTISAMPLE_NONE) {
         log("ERROR: physical output differs from requested dimensions, or MSAA is enabled. Check Spice display "
             "overrides.");
@@ -140,7 +140,7 @@ static bool make_canvas() {
     }
 
     D3DPRESENT_PARAMETERS parameters{};
-    const bool have_parameters = config.native_rendering && get_main_present_parameters(parameters);
+    const bool have_parameters = get_main_present_parameters(parameters);
     const bool supported_effect =
         have_parameters && (parameters.SwapEffect == D3DSWAPEFFECT_FLIP || parameters.SwapEffect == D3DSWAPEFFECT_COPY);
     const bool matching_parameters = have_parameters && parameters.BackBufferWidth == desc.Width &&
@@ -155,10 +155,10 @@ static bool make_canvas() {
     } else {
         physical->Release();
         log("Main canvas uses intermediate target: physical=%ux%u; canvas=%ux%u; logical=%ux%u; "
-            "native=%u, presentParameters=%u, swapEffect=%u, buffers=%u, matching=%u",
+            "presentParameters=%u, swapEffect=%u, buffers=%u, matching=%u",
             desc.Width, desc.Height, canvas_width, canvas_height, logical_width, logical_height,
-            unsigned(config.native_rendering), unsigned(have_parameters), unsigned(parameters.SwapEffect),
-            parameters.BackBufferCount, unsigned(matching_parameters));
+            unsigned(have_parameters), unsigned(parameters.SwapEffect), parameters.BackBufferCount,
+            unsigned(matching_parameters));
         HRESULT hr = device->CreateRenderTarget(canvas_width, canvas_height, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
                                                 &canvas, nullptr);
         if (FAILED(hr)) {
@@ -318,6 +318,9 @@ static HRESULT STDMETHODCALLTYPE draw_primitive_up(IDirect3DDevice9Ex* object, D
     auto original = reinterpret_cast<DrawPrimitiveUP>(original_method(object, 83));
     if (!vertices || !primitive_count || internal_call || !native_target(object))
         return original(object, type, primitive_count, vertices, stride);
+    // At 4K the game's coordinates already match the output pixel grid.
+    if (config.width == logical_width && config.height == logical_height)
+        return original(object, type, primitive_count, vertices, stride);
     DWORD fvf = 0;
     auto get_fvf = reinterpret_cast<GetFVF>(original_method(object, 90));
     if (FAILED(get_fvf(object, &fvf)) || (fvf & D3DFVF_POSITION_MASK) != D3DFVF_XYZRHW)
@@ -420,8 +423,8 @@ void capture_diagnostic_frame() {
     swprintf_s(name, L"notes-%04u%02u%02u-%02u%02u%02u-%03u", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
                now.wSecond, now.wMilliseconds);
     const auto prefix = std::wstring(directory) + name;
-    const auto logical_path = prefix + (config.native_rendering ? L"-canvas.bmp" : L"-4k.bmp");
-    const auto physical_path = prefix + L"-1080p.bmp";
+    const auto logical_path = prefix + L"-canvas.bmp";
+    const auto physical_path = prefix + L"-output.bmp";
     const bool logical_saved = save_surface_bmp(device, canvas, logical_path.c_str());
     auto physical = physical_backbuffer();
     const bool physical_saved = save_surface_bmp(device, physical, physical_path.c_str());
@@ -523,7 +526,7 @@ bool fit_output_window(HWND window, bool windowed, HMONITOR monitor) {
     }
     // D3DCREATE_NOWINDOWCHANGES leaves the game's original 4K HWND intact
     // in fullscreen. WM_MOUSE/WM_TOUCH normalize by GetClientRect, so that
-    // stale size makes a 1080p pointer reach only half of each logical axis.
+    // stale size limits pointer reach when output is smaller than the logical canvas.
     // Change the real window, allowing Spice's normal resize/touch handling
     // to observe the same dimensions. Do not rescale input a second time.
     if (!SetWindowPos(window, nullptr, x, y, outer.right - outer.left, outer.bottom - outer.top, flags)) {
@@ -605,7 +608,9 @@ static HRESULT STDMETHODCALLTYPE create_device(IDirect3D9Ex* object, UINT adapte
         pp->Windowed);
     HRESULT hr = original(object, adapter, type, window, flags, pp, pp->Windowed ? nullptr : mode, output);
     if (FAILED(hr)) {
-        log("ERROR: CreateDeviceEx failed: %08lx", hr);
+        log("ERROR: CreateDeviceEx failed for %ux%u @ %u Hz (windowed=%u): %08lx; "
+            "check display mode support and Spice overrides",
+            config.width, config.height, config.refresh, unsigned(pp->Windowed), hr);
         return hr;
     }
     release_canvas();
@@ -617,16 +622,14 @@ static HRESULT STDMETHODCALLTYPE create_device(IDirect3D9Ex* object, UINT adapte
     hook_method(device, 134, 18, reinterpret_cast<void*>(get_buffer));
     hook_method(device, 134, 16, reinterpret_cast<void*>(reset));
     hook_method(device, 134, 132, reinterpret_cast<void*>(reset_ex));
-    if (config.native_rendering) {
-        hook_method(device, 134, 37, reinterpret_cast<void*>(set_render_target));
-        hook_method(device, 134, 43, reinterpret_cast<void*>(clear));
-        hook_method(device, 134, 47, reinterpret_cast<void*>(set_viewport));
-        hook_method(device, 134, 48, reinterpret_cast<void*>(get_viewport));
-        hook_method(device, 134, 75, reinterpret_cast<void*>(set_scissor));
-        hook_method(device, 134, 76, reinterpret_cast<void*>(get_scissor));
-        hook_method(device, 134, 83, reinterpret_cast<void*>(draw_primitive_up));
-        hook_method(device, 134, 94, reinterpret_cast<void*>(set_vertex_shader_constant_f));
-    }
+    hook_method(device, 134, 37, reinterpret_cast<void*>(set_render_target));
+    hook_method(device, 134, 43, reinterpret_cast<void*>(clear));
+    hook_method(device, 134, 47, reinterpret_cast<void*>(set_viewport));
+    hook_method(device, 134, 48, reinterpret_cast<void*>(get_viewport));
+    hook_method(device, 134, 75, reinterpret_cast<void*>(set_scissor));
+    hook_method(device, 134, 76, reinterpret_cast<void*>(get_scissor));
+    hook_method(device, 134, 83, reinterpret_cast<void*>(draw_primitive_up));
+    hook_method(device, 134, 94, reinterpret_cast<void*>(set_vertex_shader_constant_f));
     if (!make_canvas()) {
         release_canvas();
         device->Release();

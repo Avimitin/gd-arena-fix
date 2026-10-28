@@ -76,15 +76,19 @@ if(BUILD_TESTING)
     target_link_options(gd-arena-fix-test PRIVATE "/MAP:${GD_OUTPUT_DIR}/gd-arena-fix-test.map")
     add_dependencies(gd-arena-fix-test default-ini)
 
-    add_test(NAME config-default COMMAND gd-arena-fix-test --check-config 120 1 1 1)
-    add_test(NAME config-high-refresh COMMAND gd-arena-fix-test --check-config 144 0 0 0)
+    add_test(NAME config-default COMMAND gd-arena-fix-test --check-config 120 1 1)
+    add_test(NAME config-high-refresh COMMAND gd-arena-fix-test --check-config 144 0 0)
     set_tests_properties(config-default PROPERTIES
-        ENVIRONMENT "GDMOD_DisableLive2D=;GDMOD_DisableSideCompositing=;GDMOD_NativeRendering=")
+        ENVIRONMENT "GDMOD_Refresh=;GDMOD_DisableLive2D=;GDMOD_DisableSideCompositing=")
+    # The obsolete FPS key must not override the single Refresh setting.
     set_tests_properties(config-high-refresh PROPERTIES
-        ENVIRONMENT "GDMOD_Refresh=144;GDMOD_FPS=144;GDMOD_Experimental=0;GDMOD_DisableLive2D=0;GDMOD_NativeRendering=0;GDMOD_DisableSideCompositing=0")
-    add_test(NAME config-side-compositing COMMAND gd-arena-fix-test --check-config 144 1 1 1)
+        ENVIRONMENT "GDMOD_Refresh=144;GDMOD_FPS=60;GDMOD_Experimental=0;GDMOD_DisableLive2D=0;GDMOD_DisableSideCompositing=0;GDMOD_NativeRendering=0")
+    add_test(NAME config-side-compositing COMMAND gd-arena-fix-test --check-config 144 1 1)
     set_tests_properties(config-side-compositing PROPERTIES
-        ENVIRONMENT "GDMOD_Refresh=144;GDMOD_FPS=144;GDMOD_Experimental=0;GDMOD_DisableLive2D=1;GDMOD_NativeRendering=1;GDMOD_DisableSideCompositing=1")
+        ENVIRONMENT "GDMOD_Refresh=144;GDMOD_Experimental=0;GDMOD_DisableLive2D=1;GDMOD_DisableSideCompositing=1")
+    add_test(NAME output-resolutions COMMAND gd-arena-fix-test --test-output-resolutions)
+    set_tests_properties(output-resolutions PROPERTIES
+        ENVIRONMENT "GDMOD_Width=;GDMOD_Height=;GDMOD_Refresh=")
     add_test(NAME animation-clock COMMAND gd-arena-fix-test --test-animation-clock)
     add_test(NAME method-lookup COMMAND gd-arena-fix-test --test-method-lookup)
     add_test(NAME timing COMMAND gd-arena-fix-test --test-timing)
@@ -94,7 +98,7 @@ if(BUILD_TESTING)
     add_test(NAME dm-note-rendering COMMAND gd-arena-fix-test --test-dm-note-rendering)
     add_test(NAME inline-hook COMMAND gd-arena-fix-test --test-inline-hook)
     add_test(NAME game-profiles COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/profile_data.py")
-    set_tests_properties(config-default config-high-refresh config-side-compositing animation-clock method-lookup timing note-clock note-config note-rendering dm-note-rendering inline-hook
+    set_tests_properties(config-default config-high-refresh config-side-compositing output-resolutions animation-clock method-lookup timing note-clock note-config note-rendering dm-note-rendering inline-hook
         PROPERTIES WORKING_DIRECTORY "${GD_OUTPUT_DIR}")
 endif()
 

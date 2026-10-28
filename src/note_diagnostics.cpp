@@ -79,7 +79,7 @@ static void dm_note_clock_read(InlineContext& c) {
     const float raw = *static_cast<const float*>(at(profile.dm_clock_raw));
     float visual = raw;
     const bool frame_known = frame.active && frame.serial != 0;
-    const bool smoothing = config.note_smoothing && config.fps > 60 && frame_known;
+    const bool smoothing = config.note_smoothing && config.refresh > 60 && frame_known;
     if (smoothing && std::isfinite(raw) && raw >= 0)
         visual = static_cast<float>(dm_note_clock.advance(frame.serial, raw, frame.elapsed));
     else
@@ -124,7 +124,7 @@ static int64_t __fastcall batch(int player, float time, unsigned mode, int64_t u
         float visual = time;
         auto& state = clocks[player];
         const auto& frame = scene_frame();
-        if (config.note_smoothing && gf_callers_valid && config.fps > 60 && frame.active && std::isfinite(time) &&
+        if (config.note_smoothing && gf_callers_valid && config.refresh > 60 && frame.active && std::isfinite(time) &&
             time >= 0) {
             if (!state.identified || state.mode != mode || state.skin != skin)
                 state.clock.reset();
@@ -224,7 +224,7 @@ static int64_t __fastcall draw(int player, float x, float y, float tail, int lan
 }
 std::vector<DiagnosticHook> note_diagnostic_hooks() {
     std::vector<DiagnosticHook> hooks;
-    if ((config.note_smoothing && gf_callers_valid && config.fps > 60) || config.diagnostics) {
+    if ((config.note_smoothing && gf_callers_valid && config.refresh > 60) || config.diagnostics) {
         hooks.push_back(bind_hook(target::get().note_batch, reinterpret_cast<void*>(batch),
                                   reinterpret_cast<void**>(&original_batch)));
         hooks.push_back(bind_hook(target::get().note_position, reinterpret_cast<void*>(position),
@@ -237,7 +237,7 @@ std::vector<DiagnosticHook> note_diagnostic_hooks() {
 }
 std::vector<InlineHook> note_inline_hooks() {
     std::vector<InlineHook> hooks;
-    if (config.fps > 60 && (config.note_smoothing || config.diagnostics)) {
+    if (config.refresh > 60 && (config.note_smoothing || config.diagnostics)) {
         for (const auto& read : target::get().dm_clock_reads)
             hooks.push_back({&read.site, dm_note_clock_read});
     }
@@ -251,7 +251,7 @@ void report_note_diagnostics(double elapsed) {
             player + 1, s.batches / elapsed, s.moving, s.repeated, s.song_time, s.upcoming, s.opaque, s.faded,
             s.upcoming ? s.minimum_alpha : 0, s.maximum_alpha, s.past, s.upcoming ? s.speed_low : 0, s.speed_high,
             s.fade1, s.fade2);
-        if (config.note_smoothing && gf_callers_valid && config.fps > 60)
+        if (config.note_smoothing && gf_callers_valid && config.refresh > 60)
             log("NOTE CLOCK P%u: raw changed/repeated %u/%u; visual changed/repeated %u/%u; correction %.3f..%.3f ms; "
                 "chart projections %u, shifted %u (visual only)",
                 player + 1, s.moving, s.repeated, s.visual_moving, s.visual_repeated, s.correction_low / 0.3,
