@@ -62,10 +62,14 @@ static void dm_note_rendering_test() {
     for (size_t i = 0; i < fixture_profile.dm_clock_reads.size(); ++i) {
         auto& read = fixture_profile.dm_clock_reads[i];
         const uintptr_t function = first_function + i * function_stride;
-        const uintptr_t site_offset = function + 1; // STC precedes the hooked VEX instruction.
+        // Seed all arithmetic flags before each native/patched call. STC alone
+        // leaves flags from the probe's stack allocation, which can differ
+        // between callers and caused a machine-dependent baseline comparison.
+        const uint8_t flag_setup[]{0x39, 0xc0, 0xf9}; // CMP EAX,EAX; STC (no GPR changes).
+        const uintptr_t site_offset = function + sizeof(flag_setup);
         const unsigned dest = read.destination;
         check(dest < 16, "DM profile destination is a valid YMM register");
-        code[function] = 0xf9; // STC: the hook must preserve incoming flags.
+        memcpy(code + function, flag_setup, sizeof(flag_setup));
         uint8_t instruction[8]{0xc5, static_cast<uint8_t>(dest >= 8 ? 0x7a : 0xfa),
                                0x10, static_cast<uint8_t>(((dest & 7) << 3) | 5),
                                0,    0,
@@ -91,8 +95,8 @@ static void dm_note_rendering_test() {
     for (size_t i = 0; i < fixture_profile.dm_clock_reads.size(); ++i) {
         const auto function = reinterpret_cast<void*>(code + first_function + i * function_stride);
         gd_inline_probe(function, &native[i], vectors.data());
-        check(native[i].regs[0] == 0x3456 && (native[i].flags & 1),
-              "native VEX instruction reaches its continuation without changing carry");
+        check(native[i].regs[0] == 0x3456 && (native[i].flags & 0x8d5) == 0x45,
+              "native VEX instruction reaches its continuation with deterministic arithmetic flags");
     }
 
     gd::config.note_smoothing = true;
@@ -119,8 +123,9 @@ static void dm_note_rendering_test() {
                         vectors.data());
         memcpy(&raw_bits_after, raw, sizeof(raw_bits_after));
         check(raw_bits_after == raw_bits_before, "DM visual hook leaves its shared raw global bitwise unchanged");
-        check(output.regs == native[index].regs && output.flags == native[index].flags,
-              "DM inline handler preserves every GPR and flags while continuing at the native tail");
+        check(output.regs == native[index].regs,
+              "DM inline handler preserves every GPR while continuing at the native tail");
+        check(output.flags == native[index].flags, "DM inline handler preserves all incoming flags");
         check(output.regs[0] == 0x3456, "DM inline bridge resumes after the replaced eight-byte instruction");
         const unsigned destination = fixture_profile.dm_clock_reads[index].destination;
         for (unsigned reg = 0; reg < 16; ++reg) {

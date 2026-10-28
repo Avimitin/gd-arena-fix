@@ -32,7 +32,7 @@ GetBackBuffer calls. Immediately before the game's presentation callback,
 the mod uses StretchRect to downsample that canvas. Reset and ResetEx
 recreate it. Auxiliary render targets retain their original dimensions.
 With `NativeRendering=0`, this does not provide native-1080p rendering savings.
-The opt-in `NativeRendering=1` path renders the main canvas at 1920x1080,
+The default `NativeRendering=1` path renders the main canvas at 1920x1080,
 retains logical coordinates and reuses compatible physical backbuffers. See
 [Native rendering](native-rendering.md) for coordinate handling and limitations.
 

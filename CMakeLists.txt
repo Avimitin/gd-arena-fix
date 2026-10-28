@@ -76,14 +76,15 @@ if(BUILD_TESTING)
     target_link_options(gd-arena-fix-test PRIVATE "/MAP:${GD_OUTPUT_DIR}/gd-arena-fix-test.map")
     add_dependencies(gd-arena-fix-test default-ini)
 
-    add_test(NAME config-default COMMAND gd-arena-fix-test --check-config 120 0 0 0)
-    add_test(NAME config-high-refresh COMMAND gd-arena-fix-test --check-config 144 0 1 0)
-    set_tests_properties(config-default PROPERTIES ENVIRONMENT "GDMOD_DisableSideCompositing=")
+    add_test(NAME config-default COMMAND gd-arena-fix-test --check-config 120 1 1 1)
+    add_test(NAME config-high-refresh COMMAND gd-arena-fix-test --check-config 144 0 0 0)
+    set_tests_properties(config-default PROPERTIES
+        ENVIRONMENT "GDMOD_DisableLive2D=;GDMOD_DisableSideCompositing=;GDMOD_NativeRendering=")
     set_tests_properties(config-high-refresh PROPERTIES
-        ENVIRONMENT "GDMOD_Refresh=144;GDMOD_FPS=144;GDMOD_Experimental=0;GDMOD_NativeRendering=1;GDMOD_DisableSideCompositing=0")
-    add_test(NAME config-side-compositing COMMAND gd-arena-fix-test --check-config 144 0 1 1)
+        ENVIRONMENT "GDMOD_Refresh=144;GDMOD_FPS=144;GDMOD_Experimental=0;GDMOD_DisableLive2D=0;GDMOD_NativeRendering=0;GDMOD_DisableSideCompositing=0")
+    add_test(NAME config-side-compositing COMMAND gd-arena-fix-test --check-config 144 1 1 1)
     set_tests_properties(config-side-compositing PROPERTIES
-        ENVIRONMENT "GDMOD_Refresh=144;GDMOD_FPS=144;GDMOD_Experimental=0;GDMOD_NativeRendering=1;GDMOD_DisableSideCompositing=1")
+        ENVIRONMENT "GDMOD_Refresh=144;GDMOD_FPS=144;GDMOD_Experimental=0;GDMOD_DisableLive2D=1;GDMOD_NativeRendering=1;GDMOD_DisableSideCompositing=1")
     add_test(NAME animation-clock COMMAND gd-arena-fix-test --test-animation-clock)
     add_test(NAME method-lookup COMMAND gd-arena-fix-test --test-method-lookup)
     add_test(NAME timing COMMAND gd-arena-fix-test --test-timing)

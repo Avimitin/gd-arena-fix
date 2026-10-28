@@ -22,10 +22,10 @@ inline Config read_config(const wchar_t* path) {
     result.refresh = read_setting(L"Refresh", 60, path);
     result.fps = read_setting(L"FPS", 60, path);
     result.diagnostics = read_setting(L"Diagnostics", 0, path) != 0;
-    result.disable_live2d = read_setting(L"DisableLive2D", 0, path) != 0;
-    result.disable_side_compositing = read_setting(L"DisableSideCompositing", 0, path) != 0;
+    result.disable_live2d = read_setting(L"DisableLive2D", 1, path) != 0;
+    result.disable_side_compositing = read_setting(L"DisableSideCompositing", 1, path) != 0;
     result.animation_timing = read_setting(L"AnimationTiming", 0, path);
-    result.native_rendering = read_setting(L"NativeRendering", 0, path) != 0;
+    result.native_rendering = read_setting(L"NativeRendering", 1, path) != 0;
     result.note_smoothing = read_setting(L"NoteSmoothing", 1, path) != 0;
     return result;
 }
