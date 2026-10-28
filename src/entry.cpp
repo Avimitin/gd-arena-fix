@@ -1,6 +1,7 @@
 #include "mod.h"
 #include "config.h"
 #include <atomic>
+#include <cstring>
 #include <mutex>
 #include <stdexcept>
 
@@ -19,14 +20,21 @@ void initialize() {
     wcscat_s(ini, L".ini");
     config = read_config(ini);
     log("Config file: %ls", ini);
-    log("gd-arena-fix 0.1.7: %ux%u @ %u; target FPS %u; native main rendering %s", config.width, config.height,
-        config.refresh, config.fps, config.native_rendering ? "enabled (experimental)" : "disabled");
     if (!valid_config(config))
         throw std::runtime_error("unsupported settings (1920x1080, FPS >= 60, Refresh=FPS)");
     if (config.animation_timing > 2)
         throw std::runtime_error("AnimationTiming must be 0, 1 or 2");
     if (!validate_game(game))
         throw std::runtime_error("unsupported gdxg.dll hash; no game patches installed");
+    if (config.native_rendering) {
+        const auto& site = target::get().font_projection_constants;
+        if (std::memcmp(at(site.address), site.signature.storage.data(), site.signature.length) != 0) {
+            config.native_rendering = false;
+            log("NativeRendering disabled: font projection signature mismatch; using 3840x2160 fallback");
+        }
+    }
+    log("gd-arena-fix 0.1.8: %ux%u @ %u; target FPS %u; native main rendering %s", config.width, config.height,
+        config.refresh, config.fps, config.native_rendering ? "enabled (experimental)" : "disabled");
     install_timing_and_present();
     // No hot unload: COM tables and trampolines must remain valid for process life.
     HMODULE pinned = nullptr;

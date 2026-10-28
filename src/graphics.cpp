@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <intrin.h>
 #include <limits>
 #include <memory>
 
@@ -23,10 +24,12 @@ using GetScissor = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, RECT*);
 using Clear = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, DWORD, const D3DRECT*, DWORD, DWORD, float, DWORD);
 using GetFVF = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, DWORD*);
 using DrawPrimitiveUP = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, D3DPRIMITIVETYPE, UINT, const void*, UINT);
+using SetVertexShaderConstantF = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9Ex*, UINT, const float*, UINT);
 
 static IDirect3DDevice9Ex* device = nullptr;
 static IDirect3DSurface9* canvas = nullptr;
 static bool canvas_bound = false;
+static bool canvas_is_backbuffer = false;
 static thread_local std::vector<uint8_t> native_up_vertices;
 static thread_local std::vector<D3DRECT> native_clear_rects;
 static std::atomic_flag warned_unhandled_up = ATOMIC_FLAG_INIT;
@@ -92,6 +95,7 @@ struct InternalCall {
 
 void release_canvas() {
     canvas_bound = false;
+    canvas_is_backbuffer = false;
     if (canvas) {
         canvas->Release();
         canvas = nullptr;
@@ -104,6 +108,15 @@ IDirect3DSurface9* physical_backbuffer() {
         reinterpret_cast<GetBuffer>(original_method(device, 18))(device, 0, 0, D3DBACKBUFFER_TYPE_MONO, &surface);
     return surface;
 }
+static bool get_main_present_parameters(D3DPRESENT_PARAMETERS& parameters) {
+    auto get_chain = reinterpret_cast<GetChain>(original_method(device, 14));
+    IDirect3DSwapChain9* chain = nullptr;
+    if (FAILED(get_chain(device, 0, &chain)) || !chain)
+        return false;
+    const HRESULT hr = chain->GetPresentParameters(&parameters);
+    chain->Release();
+    return SUCCEEDED(hr);
+}
 static bool make_canvas() {
     InternalCall bypass;
     if (canvas)
@@ -113,25 +126,47 @@ static bool make_canvas() {
         return false;
     D3DSURFACE_DESC desc{};
     const HRESULT description = physical->GetDesc(&desc);
-    physical->Release();
-    if (FAILED(description))
+    if (FAILED(description)) {
+        physical->Release();
         return false;
+    }
     const unsigned canvas_width = config.native_rendering ? desc.Width : logical_width;
     const unsigned canvas_height = config.native_rendering ? desc.Height : logical_height;
-    log("Physical main backbuffer: %ux%u; main canvas: %ux%u; logical coordinates: %ux%u", desc.Width, desc.Height,
-        canvas_width, canvas_height, logical_width, logical_height);
     if (desc.Width != config.width || desc.Height != config.height || desc.MultiSampleType != D3DMULTISAMPLE_NONE) {
         log("ERROR: physical output differs from requested dimensions, or MSAA is enabled. Check Spice display "
             "overrides.");
+        physical->Release();
         return false;
     }
-    HRESULT hr = device->CreateRenderTarget(canvas_width, canvas_height, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
-                                            &canvas, nullptr);
-    if (FAILED(hr)) {
-        log("ERROR: CreateRenderTarget canvas failed: %08lx", hr);
-        return false;
+
+    D3DPRESENT_PARAMETERS parameters{};
+    const bool have_parameters = config.native_rendering && get_main_present_parameters(parameters);
+    const bool supported_effect =
+        have_parameters && (parameters.SwapEffect == D3DSWAPEFFECT_FLIP || parameters.SwapEffect == D3DSWAPEFFECT_COPY);
+    const bool matching_parameters = have_parameters && parameters.BackBufferWidth == desc.Width &&
+                                     parameters.BackBufferHeight == desc.Height &&
+                                     parameters.MultiSampleType == D3DMULTISAMPLE_NONE;
+    if (supported_effect && matching_parameters) {
+        canvas = physical;
+        canvas_is_backbuffer = true;
+        log("Native main target reuses physical backbuffer: %ux%u; swap effect=%u, buffers=%u; logical=%ux%u",
+            desc.Width, desc.Height, unsigned(parameters.SwapEffect), parameters.BackBufferCount, logical_width,
+            logical_height);
+    } else {
+        physical->Release();
+        log("Main canvas uses intermediate target: physical=%ux%u; canvas=%ux%u; logical=%ux%u; "
+            "native=%u, presentParameters=%u, swapEffect=%u, buffers=%u, matching=%u",
+            desc.Width, desc.Height, canvas_width, canvas_height, logical_width, logical_height,
+            unsigned(config.native_rendering), unsigned(have_parameters), unsigned(parameters.SwapEffect),
+            parameters.BackBufferCount, unsigned(matching_parameters));
+        HRESULT hr = device->CreateRenderTarget(canvas_width, canvas_height, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
+                                                &canvas, nullptr);
+        if (FAILED(hr)) {
+            log("ERROR: CreateRenderTarget canvas failed: %08lx", hr);
+            return false;
+        }
     }
-    hr = device->SetRenderTarget(0, canvas);
+    HRESULT hr = device->SetRenderTarget(0, canvas);
     if (FAILED(hr)) {
         release_canvas();
         return false;
@@ -150,6 +185,8 @@ bool compose() {
     InternalCall bypass;
     if (!device || !canvas)
         return false;
+    if (canvas_is_backbuffer)
+        return true;
     auto physical = physical_backbuffer();
     if (!physical)
         return false;
@@ -337,6 +374,28 @@ static HRESULT STDMETHODCALLTYPE draw_primitive_up(IDirect3DDevice9Ex* object, D
         std::memcpy(vertex + sizeof(x), &y, sizeof(y));
     }
     return original(object, type, primitive_count, native_up_vertices.data(), stride);
+}
+static HRESULT STDMETHODCALLTYPE set_vertex_shader_constant_f(IDirect3DDevice9Ex* object, UINT start_register,
+                                                              const float* values, UINT vector4f_count) {
+    auto original = reinterpret_cast<SetVertexShaderConstantF>(original_method(object, 94));
+    if (!game || !values || internal_call || !native_target(object) || start_register != 0 || vector4f_count != 4)
+        return original(object, start_register, values, vector4f_count);
+
+    const auto& profile = target::get();
+    if (reinterpret_cast<uintptr_t>(_ReturnAddress()) !=
+        reinterpret_cast<uintptr_t>(at(profile.font_projection_constants_return)))
+        return original(object, start_register, values, vector4f_count);
+
+    float adjusted[16];
+    memcpy(adjusted, values, sizeof(adjusted));
+    // Keep dynamic font vertices in the 3840x2160 logical canvas coordinate space.
+    adjusted[0] = 2.0f / float(logical_width);
+    adjusted[5] = -2.0f / float(logical_height);
+    static std::atomic_flag logged = ATOMIC_FLAG_INIT;
+    if (!logged.test_and_set())
+        log("Native font projection corrected at %p: c0.x %g -> %g, c1.y %g -> %g", _ReturnAddress(), values[0],
+            adjusted[0], values[5], adjusted[5]);
+    return original(object, start_register, adjusted, vector4f_count);
 }
 void capture_diagnostic_frame() {
     static bool previously_down = false;
@@ -566,6 +625,7 @@ static HRESULT STDMETHODCALLTYPE create_device(IDirect3D9Ex* object, UINT adapte
         hook_method(device, 134, 75, reinterpret_cast<void*>(set_scissor));
         hook_method(device, 134, 76, reinterpret_cast<void*>(get_scissor));
         hook_method(device, 134, 83, reinterpret_cast<void*>(draw_primitive_up));
+        hook_method(device, 134, 94, reinterpret_cast<void*>(set_vertex_shader_constant_f));
     }
     if (!make_canvas()) {
         release_canvas();

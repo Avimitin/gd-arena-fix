@@ -5,7 +5,7 @@ import hashlib
 import zipfile
 
 NAME = "gd-arena-fix"
-VERSION = "0.1.7"
+VERSION = "0.1.8"
 root = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output-dir", type=Path, default=root,

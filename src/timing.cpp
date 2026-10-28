@@ -53,32 +53,33 @@ static int64_t __fastcall capture_cursor(int channel) {
 
 static int64_t __fastcall present() {
     const double begin = seconds();
-    const bool copied = compose();
+    const bool output_ready = compose();
     if (config.diagnostics)
         capture_diagnostic_frame();
     const double composed = seconds();
     auto result = original_present();
     const double done = seconds();
     static double last = 0, report_start = 0, total_compose = 0, total_present = 0, max_gap = 0;
-    static unsigned frames = 0, copies = 0;
+    static unsigned frames = 0, ready_frames = 0;
     if (!report_start)
         report_start = done;
     if (last)
         max_gap = std::max(max_gap, done - last);
     last = done;
     ++frames;
-    copies += copied;
+    ready_frames += output_ready;
     total_compose += composed - begin;
     total_present += done - composed;
     if (done - report_start >= 5.0) {
-        log("Present callbacks %.2f Hz; copies %u/%u; max gap %.2f ms; copy avg %.3f ms; Present avg %.3f ms",
-            frames / (done - report_start), copies, frames, max_gap * 1000, total_compose * 1000 / frames,
+        log("Present callbacks %.2f Hz; output ready %u/%u; max gap %.2f ms; frame prep avg %.3f ms; Present avg %.3f "
+            "ms",
+            frames / (done - report_start), ready_frames, frames, max_gap * 1000, total_compose * 1000 / frames,
             total_present * 1000 / frames);
         if (config.diagnostics)
             report_note_diagnostics(done - report_start);
         report_animations();
         report_start = done;
-        frames = copies = 0;
+        frames = ready_frames = 0;
         total_compose = total_present = max_gap = 0;
     }
     return result;
@@ -225,8 +226,9 @@ void install_timing_and_present() {
     }();
     for (const auto& hook : diagnostics)
         require_bytes(hook.address, hook.signature);
-    const auto characters = config.disable_live2d ? live2d_patches() : std::vector<Live2DPatch>{};
-    for (const auto& patch : characters)
+    const auto optional_render_patches =
+        (config.disable_live2d || config.disable_side_compositing) ? live2d_patches() : std::vector<Live2DPatch>{};
+    for (const auto& patch : optional_render_patches)
         require_bytes(patch.address, patch.before);
     void** afp_slot = nullptr;
     const bool timing = config.fps > 60;
@@ -267,7 +269,7 @@ void install_timing_and_present() {
             ranges.push_back({hook.address, hook.signature.size()});
     for (const auto& hook : inline_hooks)
         ranges.push_back({hook.site->address, hook.site->signature.length});
-    for (const auto& patch : characters)
+    for (const auto& patch : optional_render_patches)
         ranges.push_back({patch.address, patch.before.size()});
     for (const auto* patch : scene_patches)
         ranges.push_back({patch->address, patch->before.length});
@@ -280,7 +282,7 @@ void install_timing_and_present() {
     }
     require_disjoint_patches(std::move(ranges));
     std::vector<Patch> patches;
-    for (const auto& patch : characters)
+    for (const auto& patch : optional_render_patches)
         patches.push_back({at(patch.address), patch.before, patch.after});
     for (const auto* patch : scene_patches)
         patches.push_back({at(patch->address), patch->before.copy(), patch->after.copy()});
@@ -384,7 +386,14 @@ void install_timing_and_present() {
     log("DisableLive2D=%d: %s", config.disable_live2d,
         config.disable_live2d
             ? "left/right cabinet character creation disabled (3 guarded sites); saved selections retained"
+        : config.disable_side_compositing
+            ? "optional left/right characters disabled through DisableSideCompositing; saved selections retained"
             : "original character behavior retained");
+    log("DisableSideCompositing=%d: %s", config.disable_side_compositing,
+        config.disable_side_compositing ? "side video/effect compositing skipped (3 guarded sites: up to 4 copies and "
+                                          "2 draws); main and touch retained; "
+                                          "other side canvas work remains"
+                                        : "original side compositing retained");
     if (config.diagnostics)
         log("Note diagnostics enabled (observation only). Ctrl+Shift+F8 saves main 4K/1080p BMPs beside the DLL; "
             "capture may briefly stall rendering.");

@@ -13,6 +13,7 @@ struct Config {
     unsigned width = 1920, height = 1080, refresh = 60, fps = 60;
     bool diagnostics = false;
     bool disable_live2d = false;
+    bool disable_side_compositing = false;
     unsigned animation_timing = 0;
     bool native_rendering = false;
 };

@@ -122,6 +122,8 @@ Run the native graphics checks on a machine with a Direct3D 9Ex adapter:
 ```powershell
 .\dist\gd-arena-fix-test.exe
 .\dist\gd-arena-fix-test.exe --native-rendering
+.\dist\gd-arena-fix-test.exe --native-direct
+.\dist\gd-arena-fix-test.exe --native-direct-copy
 ```
 
 This checks fractional timing arithmetic, unsupported-image rejection,
@@ -129,6 +131,10 @@ device/swapchain access to the logical 4K canvas, four-quadrant downsampling,
 BMP color and format, reset behavior, and main-window input dimensions.
 The native-rendering invocation also checks projected and screen-space drawing,
 clipping, state restoration and auxiliary-target isolation at 1080p.
+The native-direct invocation additionally checks backbuffer reuse across
+two-buffer FLIP presentation and reset, including font projection.
+The native-direct-copy invocation checks the same behavior with COPY and one
+backbuffer.
 A hidden fullscreen-style window verifies pointer normalization and monitor
 placement; it is not an actual fullscreen game test.
 

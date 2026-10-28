@@ -3,6 +3,8 @@ PUBLIC gd_inline_probe
 PUBLIC gd_inline_clobber
 PUBLIC gd_cmp_flags
 PUBLIC gd_number_probe
+PUBLIC gd_vs_constant_fixture
+PUBLIC gd_vs_constant_fixture_return
 .code
 ; Call an isolated arithmetic block. Supply its nonstandard register inputs
 ; and scratch stack while preserving the host's nonvolatile registers.
@@ -185,4 +187,18 @@ gd_inline_clobber PROC
     vzeroupper
     ret
 gd_inline_clobber ENDP
+gd_vs_constant_fixture PROC FRAME
+    sub rsp, 28h
+    .allocstack 28h
+    .endprolog
+    mov rax, rcx
+    mov rcx, rdx
+    mov rdx, r8
+    mov r8, r9
+    mov r9d, dword ptr [rsp+50h]
+    call rax
+gd_vs_constant_fixture_return LABEL BYTE
+    add rsp, 28h
+    ret
+gd_vs_constant_fixture ENDP
 END

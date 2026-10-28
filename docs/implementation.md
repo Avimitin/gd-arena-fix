@@ -32,14 +32,17 @@ GetBackBuffer calls. Immediately before the game's presentation callback,
 the mod uses StretchRect to downsample that canvas. Reset and ResetEx
 recreate it. Auxiliary render targets retain their original dimensions.
 With `NativeRendering=0`, this does not provide native-1080p rendering savings.
-The opt-in `NativeRendering=1` path instead allocates a 1920?1080 main canvas,
-retains logical coordinates and copies to the output at the same size. See
+The opt-in `NativeRendering=1` path renders the main canvas at 1920x1080,
+retains logical coordinates and reuses compatible physical backbuffers. See
 [Native rendering](native-rendering.md) for coordinate handling and limitations.
 
 COM hooks replace individual slots in the shared vtable and retain the
 original methods. A limited clone of the public COM vtable is unsafe here:
 the native runtime also uses private slots. A thread-local internal-call
 guard permits access to the actual physical backbuffer without recursion.
+Original-method lookup caches the last registered vtable per thread, avoiding
+the registry lock on repeated calls. Only immutable original-method snapshots
+are cached; device state still comes from D3D, including after state blocks.
 
 The game's 4K main window uses D3DCREATE_NOWINDOWCHANGES. Its mouse/touch
 handler normalizes positions with GetClientRect, so resizing only the

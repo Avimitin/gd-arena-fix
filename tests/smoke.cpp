@@ -2,10 +2,12 @@
 #include "../src/timing_math.h"
 #include "../src/config.h"
 #include "../src/live2d.h"
+#include <algorithm>
 #include <cstdio>
 #include <cmath>
 #include <stdexcept>
 #include <fstream>
+#include <iterator>
 #include <vector>
 #include "../third_party/minhook/include/MinHook.h"
 
@@ -13,12 +15,16 @@ static void check(bool condition, const char* text) {
     if (!condition)
         throw std::runtime_error(text);
 }
+#include "method_lookup.h"
 #include "animations.h"
 #include "timing.h"
 #include "scene_timing.h"
 #include "inline_hook.h"
 #include "selection_diagnostics.h"
 #include "selection_motion.h"
+extern "C" HRESULT gd_vs_constant_fixture(void*, IDirect3DDevice9Ex*, UINT, const float*, UINT);
+extern "C" char gd_vs_constant_fixture_return;
+static D3DSWAPEFFECT native_smoke_effect = D3DSWAPEFFECT_DISCARD;
 static void hr(HRESULT result, const char* text) {
     if (FAILED(result)) {
         printf("HRESULT %08lx: %s\n", result, text);
@@ -78,6 +84,186 @@ static std::vector<uint32_t> read_surface(IDirect3DDevice9Ex* device, IDirect3DS
 static uint32_t pixel(const std::vector<uint32_t>& pixels, const D3DSURFACE_DESC& desc, unsigned x, unsigned y) {
     check(x < desc.Width && y < desc.Height, "pixel lies within surface");
     return pixels[size_t(y) * desc.Width + x] & 0xffffff;
+}
+static uintptr_t com_identity(IUnknown* object) {
+    IUnknown* identity = nullptr;
+    if (!object || FAILED(object->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&identity))))
+        return 0;
+    const auto result = reinterpret_cast<uintptr_t>(identity);
+    identity->Release();
+    return result;
+}
+static IDirect3DVertexShader9* make_afp_style_vertex_shader(IDirect3DDevice9Ex* device) {
+    // D3DXAssembleShader output for `vs.1.1; mov oPos, c0; mov oD0, c1`.
+    // c0 is set offscreen so a vertex shader that processes XYZRHW vertices
+    // would clip this geometry; POSITIONT should bypass it.
+    static constexpr DWORD bytecode[]{0xfffe0101, 0x00000001, 0xc00f0000, 0xa0e40000,
+                                      0x00000001, 0xd00f0000, 0xa0e40001, 0x0000ffff};
+    IDirect3DVertexShader9* shader = nullptr;
+    hr(device->CreateVertexShader(bytecode, &shader), "create AFP-style vertex shader");
+    check(shader != nullptr, "create AFP-style vertex shader");
+    return shader;
+}
+static IDirect3DVertexShader9* make_afp_font_projection_shader(IDirect3DDevice9Ex* device) {
+    // D3DXAssembleShader output for the game-like FVF 0x142 inputs:
+    // vs.1.1; dcl_position v0; dcl_color v1; dcl_texcoord0 v2;
+    // m4x4 oPos,v0,c0; mov oD0,v1; mov oT0.xy,v2
+    static constexpr DWORD bytecode[]{0xfffe0101, 0x0000001f, 0x80000000, 0x900f0000, 0x0000001f, 0x8000000a,
+                                      0x900f0001, 0x0000001f, 0x80000005, 0x900f0002, 0x00000014, 0xc00f0000,
+                                      0x90e40000, 0xa0e40000, 0x00000001, 0xd00f0000, 0x90e40001, 0x00000001,
+                                      0xe0030000, 0x90e40002, 0x0000ffff};
+    IDirect3DVertexShader9* shader = nullptr;
+    hr(device->CreateVertexShader(bytecode, &shader), "create AFP font-projection vertex shader");
+    check(shader != nullptr, "create AFP font-projection vertex shader");
+    return shader;
+}
+static void afp_font_projection_test(IDirect3DDevice9Ex* device, IDirect3DSurface9* logical,
+                                     const D3DSURFACE_DESC& desc) {
+    const auto saved_game = gd::game;
+    const auto saved_profile = gd::target::selected;
+    check(gd::target::select(gd::target::supported[0]->sha256), "select profile for AFP font projection test");
+    const auto& profile = gd::target::get();
+    const uintptr_t fixture_return = reinterpret_cast<uintptr_t>(&gd_vs_constant_fixture_return);
+    const uintptr_t return_offset = profile.font_projection_constants_return - profile.preferred_base;
+    gd::game = reinterpret_cast<HMODULE>(fixture_return - return_offset);
+    check(reinterpret_cast<uintptr_t>(gd::at(profile.font_projection_constants_return)) == fixture_return,
+          "synthetic game base relocates font-projection callsite to assembly fixture");
+
+    auto vtable = *reinterpret_cast<void***>(device);
+    void* set_constants = vtable[94];
+    auto fixture_call = [&](UINT start, const float* values, UINT count) {
+        return gd_vs_constant_fixture(set_constants, device, start, values, count);
+    };
+    const auto close = [](float a, float b) { return std::abs(a - b) < 1e-7f; };
+    float physical_projection[16]{2.0f / 1920.0f, 0, 0, -1, 0, -2.0f / 1080.0f, 0, 1, 0, 0, -0.5f, 0.5f, 0, 0, 0, 1};
+    float original_projection[16];
+    memcpy(original_projection, physical_projection, sizeof(physical_projection));
+    float observed[16]{};
+    hr(device->SetVertexShaderConstantF(0, physical_projection, 4), "set physical-output font projection");
+    hr(device->GetVertexShaderConstantF(0, observed, 4), "read non-font-caller projection constants");
+    check(memcmp(observed, physical_projection, sizeof(observed)) == 0,
+          "ordinary constant upload bypasses font projection correction");
+
+    const float unrelated[16]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    hr(fixture_call(4, unrelated, 4), "fixture upload to unrelated vertex constants");
+    float unrelated_observed[16]{};
+    hr(device->GetVertexShaderConstantF(4, unrelated_observed, 4), "read unrelated vertex constants");
+    check(memcmp(unrelated_observed, unrelated, sizeof(unrelated)) == 0,
+          "font correction leaves nonzero-start constant uploads unchanged");
+    hr(fixture_call(0, physical_projection, 3), "fixture short font-constant upload");
+    hr(device->GetVertexShaderConstantF(0, observed, 4), "read short font-constant upload");
+    check(memcmp(observed, physical_projection, sizeof(observed)) == 0,
+          "font correction requires the complete four-register projection upload");
+
+    IDirect3DSurface9* auxiliary = nullptr;
+    hr(device->CreateRenderTarget(320, 240, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &auxiliary, nullptr),
+       "create auxiliary target for font projection isolation");
+    D3DVIEWPORT9 small_main_viewport{0, 0, 200, 160, 0.0f, 1.0f};
+    hr(device->SetViewport(&small_main_viewport), "reduce main viewport before auxiliary target bind");
+    hr(device->SetRenderTarget(0, auxiliary), "bind auxiliary target for font projection isolation");
+    hr(fixture_call(0, physical_projection, 4), "fixture font constants on auxiliary target");
+    hr(device->GetVertexShaderConstantF(0, observed, 4), "read auxiliary-target font constants");
+    check(memcmp(observed, physical_projection, sizeof(observed)) == 0,
+          "font projection is untouched on an auxiliary target");
+    auxiliary->Release();
+    hr(device->SetRenderTarget(0, logical), "rebind native canvas for font projection");
+    D3DVIEWPORT9 full_viewport{0, 0, 3840, 2160, 0.0f, 1.0f};
+    hr(device->SetViewport(&full_viewport), "restore logical viewport for font projection");
+    RECT full_scissor{0, 0, 3840, 2160};
+    hr(device->SetScissorRect(&full_scissor), "restore logical scissor for font projection");
+
+    const bool native_rendering = gd::config.native_rendering;
+    gd::config.native_rendering = false;
+    hr(fixture_call(0, physical_projection, 4), "fixture font constants with native mode disabled");
+    hr(device->GetVertexShaderConstantF(0, observed, 4), "read fallback-mode font constants");
+    check(memcmp(observed, physical_projection, sizeof(observed)) == 0,
+          "font projection remains unchanged when NativeRendering is disabled");
+    gd::config.native_rendering = native_rendering;
+
+    auto shader = make_afp_font_projection_shader(device);
+    IDirect3DTexture9* atlas = nullptr;
+    hr(device->CreateTexture(2, 2, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &atlas, nullptr),
+       "create solid font-atlas texture");
+    D3DLOCKED_RECT atlas_lock{};
+    hr(atlas->LockRect(0, &atlas_lock, nullptr, D3DLOCK_DISCARD), "lock solid font-atlas texture");
+    for (unsigned y = 0; y < 2; ++y) {
+        auto row = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(atlas_lock.pBits) + y * atlas_lock.Pitch);
+        row[0] = row[1] = 0xffffffff;
+    }
+    atlas->UnlockRect(0);
+
+    hr(device->SetRenderTarget(0, logical), "bind native canvas for font glyph repro");
+    hr(device->SetViewport(&full_viewport), "set full logical viewport for font glyph repro");
+    hr(device->SetScissorRect(&full_scissor), "set full logical scissor for font glyph repro");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor for font repro clear");
+    hr(device->Clear(0, nullptr, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0), "clear before clipped font repro");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE), "enable scissor for font repro");
+    hr(device->SetRenderState(D3DRS_ZENABLE, FALSE), "disable depth for font repro");
+    hr(device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE), "disable culling for font repro");
+    hr(device->SetPixelShader(nullptr), "select fixed-function font pixel path");
+    hr(device->SetVertexShader(shader), "bind AFP font-projection vertex shader");
+    hr(device->SetFVF(0x142), "set AFP XYZ diffuse texture FVF");
+    hr(device->SetTexture(0, atlas), "bind solid font-atlas texture");
+    hr(device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE), "modulate glyph and diffuse color");
+    hr(device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE), "select glyph texture color");
+    hr(device->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE), "select glyph vertex color");
+    hr(device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE), "modulate glyph and diffuse alpha");
+    hr(device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE), "select glyph texture alpha");
+    hr(device->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE), "select glyph vertex alpha");
+    hr(device->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT), "set font atlas point minification");
+    hr(device->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT), "set font atlas point magnification");
+    hr(device->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE), "disable font atlas mip filtering");
+
+    struct FontVertex {
+        float x, y, z;
+        D3DCOLOR color;
+        float u, v;
+    };
+    static_assert(sizeof(FontVertex) == 24);
+    const FontVertex glyph_quad[]{{3231.0f, 707.0f, 0.5f, 0xff00ff00, 0.0f, 0.0f},
+                                  {3305.0f, 707.0f, 0.5f, 0xff00ff00, 1.0f, 0.0f},
+                                  {3231.0f, 780.0f, 0.5f, 0xff00ff00, 0.0f, 1.0f},
+                                  {3305.0f, 780.0f, 0.5f, 0xff00ff00, 1.0f, 1.0f}};
+    const std::vector<uint8_t> original_glyph(reinterpret_cast<const uint8_t*>(glyph_quad),
+                                              reinterpret_cast<const uint8_t*>(glyph_quad) + sizeof(glyph_quad));
+    hr(device->SetVertexShaderConstantF(0, physical_projection, 4), "restore physical font projection for repro");
+    hr(device->BeginScene(), "begin clipped font glyph repro");
+    hr(device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, glyph_quad, sizeof(FontVertex)),
+       "draw AFP-style FVF 0x142 font glyph with physical projection");
+    hr(device->EndScene(), "end clipped font glyph repro");
+    auto pixels = read_surface(device, logical, desc);
+    check(pixel(pixels, desc, 1625, 365) == 0x000000,
+          "physical 1080p font projection clips far-right 4K glyph before correction");
+
+    hr(fixture_call(0, physical_projection, 4), "fixture font projection correction at exact game return address");
+    hr(device->GetVertexShaderConstantF(0, observed, 4), "read corrected font projection");
+    check(close(observed[0], 2.0f / 3840.0f) && close(observed[5], -2.0f / 2160.0f),
+          "font callsite uploads logical 4K projection scales");
+    for (unsigned i = 0; i < 16; ++i)
+        if (i != 0 && i != 5)
+            check(observed[i] == physical_projection[i], "font projection correction preserves other constants");
+    check(memcmp(physical_projection, original_projection, sizeof(physical_projection)) == 0,
+          "font correction leaves the caller's matrix memory unchanged");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor for corrected font clear");
+    hr(device->Clear(0, nullptr, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0), "clear before corrected font glyph");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE), "enable scissor for corrected font glyph");
+    hr(device->BeginScene(), "begin corrected font glyph repro");
+    hr(device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, glyph_quad, sizeof(FontVertex)),
+       "draw corrected AFP-style FVF 0x142 font glyph");
+    hr(device->EndScene(), "end corrected font glyph repro");
+    check(memcmp(glyph_quad, original_glyph.data(), sizeof(glyph_quad)) == 0,
+          "projection correction leaves glyph vertex bytes unchanged");
+    pixels = read_surface(device, logical, desc);
+    check(pixel(pixels, desc, 1625, 365) == 0x00ff00 && pixel(pixels, desc, 1200, 365) == 0x000000,
+          "corrected 4K projection brings far-right dynamic text glyphs into the native canvas");
+
+    hr(device->SetVertexShader(nullptr), "clear AFP font-projection shader");
+    hr(device->SetTexture(0, nullptr), "clear font-atlas texture");
+    atlas->Release();
+    shader->Release();
+    gd::game = saved_game;
+    gd::target::selected = saved_profile;
+    puts("PASS: AFP FVF 0x142 text projection correction, callsite gating, clipping, aux/fallback isolation");
 }
 static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9* logical, const D3DSURFACE_DESC& desc) {
     check(desc.Width == 1920 && desc.Height == 1080, "native main canvas has physical dimensions");
@@ -196,6 +382,43 @@ static void native_rendering_test(IDirect3DDevice9Ex* device, IDirect3DSurface9*
     check(pixel(pixels, desc, 1399, 800) == 0x000000 && pixel(pixels, desc, 1400, 800) == 0x00ff00 &&
               pixel(pixels, desc, 1699, 800) == 0x00ff00 && pixel(pixels, desc, 1700, 800) == 0x000000,
           "half-pixel mapping places transformed quad edges on native pixel boundaries");
+
+    // AFP binds its programmable vertex shader, then selects FVF 0x144 before
+    // submitting these screen-space vertices. POSITIONT must still bypass the
+    // shader's clip-space transform.
+    auto afp_shader = make_afp_style_vertex_shader(device);
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor for AFP shader test clear");
+    hr(device->Clear(0, nullptr, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0), "clear before AFP shader test");
+    const float offscreen_position[4]{4.0f, 4.0f, 4.0f, 1.0f};
+    const float shader_color[4]{1.0f, 1.0f, 1.0f, 1.0f};
+    hr(device->SetVertexShaderConstantF(0, offscreen_position, 1), "set clipping position shader constant");
+    hr(device->SetVertexShaderConstantF(1, shader_color, 1), "set shader color constant");
+    hr(device->SetTexture(0, nullptr), "clear texture for AFP shader test");
+    hr(device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1), "select AFP vertex diffuse color");
+    hr(device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE), "set AFP diffuse color argument");
+    hr(device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1), "select AFP vertex alpha");
+    hr(device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE), "set AFP diffuse alpha argument");
+    hr(device->SetVertexShader(afp_shader), "bind AFP-style vertex shader");
+    hr(device->SetFVF(0x144), "select AFP screen-space FVF after vertex shader");
+    IDirect3DVertexShader9* active_shader = nullptr;
+    hr(device->GetVertexShader(&active_shader), "query AFP-style vertex shader after SetFVF");
+    check(active_shader == afp_shader, "SetFVF retains AFP-style vertex shader binding");
+    if (active_shader)
+        active_shader->Release();
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE), "enable scissor for AFP shader quad");
+    hr(device->BeginScene(), "begin AFP shader quad");
+    hr(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 2, logical_quad, sizeof(TransformedVertex)),
+       "draw AFP-style FVF 0x144 screen-space quad with vertex shader bound");
+    hr(device->EndScene(), "end AFP shader quad");
+    check(memcmp(logical_quad, original_quad.data(), sizeof(logical_quad)) == 0,
+          "AFP-style shader draw leaves submitted text vertices unchanged");
+    pixels = read_surface(device, logical, desc);
+    check(pixel(pixels, desc, 1500, 800) == 0x00ff00 && pixel(pixels, desc, 1200, 800) == 0x000000,
+          "bound vertex shader preserves native XYZRHW text-quad placement and clipping");
+    hr(device->SetVertexShader(nullptr), "clear AFP-style vertex shader after test");
+    afp_shader->Release();
+
+    afp_font_projection_test(device, logical, desc);
 
     // Two real AFP paths use the 20-byte XYZRHW + diffuse FVF 0x44.
     struct TransformedColorVertex {
@@ -397,7 +620,97 @@ static void scaling_test(IDirect3DDevice9Ex* device) {
     logical->Release();
     puts("PASS: device/swapchain 4K canvas -> 1080p output, four corner colors verified");
 }
-static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, unsigned animations) {
+static void direct_backbuffer_present_test(IDirect3DDevice9Ex* device, D3DSWAPEFFECT expected_effect,
+                                           UINT expected_backbuffer_count) {
+    IDirect3DSwapChain9* chain = nullptr;
+    hr(device->GetSwapChain(0, &chain), "get main direct swapchain");
+    D3DPRESENT_PARAMETERS parameters{};
+    hr(chain->GetPresentParameters(&parameters), "get effective direct swapchain parameters");
+    check(parameters.SwapEffect == expected_effect && parameters.BackBufferCount == expected_backbuffer_count &&
+              parameters.BackBufferWidth == 1920 && parameters.BackBufferHeight == 1080 &&
+              parameters.MultiSampleType == D3DMULTISAMPLE_NONE,
+          "direct path fixture uses its native-size swap effect with non-MSAA buffers");
+    chain->Release();
+
+    IDirect3DSurface9* canvas = nullptr;
+    hr(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &canvas), "get direct native canvas before present loop");
+    check(canvas != nullptr, "direct native canvas exists");
+    IDirect3DSurface9* physical = gd::physical_backbuffer();
+    check(physical != nullptr, "direct physical backbuffer exists");
+    const auto canvas_identity = com_identity(canvas);
+    check(canvas_identity != 0 && canvas_identity == com_identity(physical),
+          "native direct canvas is the original physical backbuffer");
+    D3DSURFACE_DESC desc{};
+    hr(canvas->GetDesc(&desc), "describe direct canvas");
+    D3DSURFACE_DESC physical_desc{};
+    hr(physical->GetDesc(&physical_desc), "describe direct physical backbuffer");
+    check(desc.Width == 1920 && desc.Height == 1080 && physical_desc.Width == desc.Width &&
+              physical_desc.Height == desc.Height,
+          "direct canvas and physical backbuffer retain native 1080p dimensions");
+
+    IDirect3DSurface9* auxiliary = nullptr;
+    hr(device->CreateRenderTarget(320, 240, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &auxiliary, nullptr),
+       "create compose-isolation target for direct backbuffer");
+    hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor for full direct-frame clears");
+    static constexpr D3DCOLOR frame_colors[]{0xff17391f, 0xff542073, 0xffa34119, 0xff206da8,
+                                             0xff8f7412, 0xff3b8a66, 0xff80409e, 0xffc25e31};
+    constexpr D3DCOLOR auxiliary_color = 0xff2c4d91;
+    for (unsigned cycle = 0; cycle < std::size(frame_colors); ++cycle) {
+        hr(device->SetRenderTarget(0, canvas), "bind direct game canvas before frame clear");
+        D3DVIEWPORT9 logical_viewport{0, 0, 3840, 2160, 0.0f, 1.0f};
+        hr(device->SetViewport(&logical_viewport), "set logical viewport for direct full-frame clear");
+        hr(device->Clear(0, nullptr, D3DCLEAR_TARGET, frame_colors[cycle], 1.0f, 0),
+           "clear direct canvas to unique cycle color");
+        const auto pixels = read_surface(device, canvas, desc);
+        check(std::all_of(
+                  pixels.begin(), pixels.end(),
+                  [color = frame_colors[cycle] & 0xffffff](uint32_t value) { return (value & 0xffffff) == color; }),
+              "cached direct canvas contains the expected full-frame cycle color");
+        const auto physical_pixels = read_surface(device, physical, physical_desc);
+        check(physical_pixels == pixels, "physical backbuffer exposes the same full-frame direct canvas pixels");
+
+        // Composition may occur while an auxiliary target is current after the
+        // game's main canvas has already finished rendering.
+        hr(device->SetRenderTarget(0, auxiliary), "bind auxiliary target before direct compose");
+        hr(device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE), "disable scissor on auxiliary compose target");
+        hr(device->Clear(0, nullptr, D3DCLEAR_TARGET, auxiliary_color, 1.0f, 0),
+           "paint auxiliary sentinel before direct compose");
+        check(gd::compose(), "direct compose succeeds while auxiliary target is bound");
+        IDirect3DSurface9* bound = nullptr;
+        hr(device->GetRenderTarget(0, &bound), "query target after direct compose");
+        check(com_identity(bound) == com_identity(auxiliary), "direct compose leaves auxiliary target bound");
+        bound->Release();
+        D3DSURFACE_DESC auxiliary_desc{};
+        hr(auxiliary->GetDesc(&auxiliary_desc), "describe direct compose-isolation target");
+        const auto auxiliary_pixels = read_surface(device, auxiliary, auxiliary_desc);
+        check(std::all_of(auxiliary_pixels.begin(), auxiliary_pixels.end(),
+                          [](uint32_t value) { return (value & 0xffffff) == (auxiliary_color & 0xffffff); }),
+              "direct compose does not overwrite the auxiliary target");
+
+        hr(device->SetRenderTarget(0, canvas), "restore direct canvas before PresentEx");
+        IDirect3DSurface9* physical_before_present = gd::physical_backbuffer();
+        check(physical_before_present != nullptr && com_identity(physical_before_present) == canvas_identity,
+              "cached direct canvas identity remains the physical backbuffer before PresentEx");
+        physical_before_present->Release();
+        hr(device->PresentEx(nullptr, nullptr, nullptr, nullptr, 0), "present direct backbuffer cycle");
+
+        IDirect3DSurface9* current = nullptr;
+        hr(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &current), "get direct canvas after PresentEx");
+        check(com_identity(current) == canvas_identity, "cached direct canvas remains current after PresentEx");
+        current->Release();
+        IDirect3DSurface9* current_physical = gd::physical_backbuffer();
+        check(current_physical != nullptr && com_identity(current_physical) == canvas_identity,
+              "physical backbuffer identity is stable across PresentEx");
+        current_physical->Release();
+    }
+    hr(device->SetRenderTarget(0, canvas), "restore direct canvas after present cycles");
+    auxiliary->Release();
+    physical->Release();
+    canvas->Release();
+    puts("PASS: direct backbuffer identity and alternating frame colors across PresentEx");
+}
+static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, unsigned animations,
+                        bool disable_side_compositing) {
     const auto image_hash = gd::sha256_file(path);
     check(gd::target::select(image_hash), "supported game file selects one central address profile");
     std::ifstream file(path, std::ios::binary);
@@ -427,7 +740,9 @@ static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, 
     gd::config.fps = gd::config.refresh = fps;
     gd::config.diagnostics = true;
     gd::config.disable_live2d = disable_live2d;
+    gd::config.disable_side_compositing = disable_side_compositing;
     gd::config.animation_timing = animations;
+    const bool suppress_characters = disable_live2d || disable_side_compositing;
     for (const auto& hook : gd::selection_diagnostic_hooks()) {
         auto site = static_cast<uint8_t*>(gd::at(hook.address));
         *site ^= 1;
@@ -503,7 +818,7 @@ static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, 
         }
     }
     const auto characters = gd::live2d_patches();
-    if (disable_live2d) {
+    if (suppress_characters) {
         // Each conflicting site must abort before any hook or patch is applied.
         for (const auto& patch : characters) {
             auto site = static_cast<uint8_t*>(gd::at(patch.address));
@@ -537,9 +852,15 @@ static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, 
         native_sprite_test();
     }
     for (const auto& patch : characters) {
-        const auto& expected = disable_live2d ? patch.after : patch.before;
+        const auto& expected = (disable_live2d || disable_side_compositing) ? patch.after : patch.before;
         check(memcmp(gd::at(patch.address), expected.data(), expected.size()) == 0,
-              "Live2D switch controls each character creation patch");
+              "selected Live2D or side-compositing switch controls each guarded patch");
+    }
+    const auto& profile = gd::target::get();
+    for (const auto* patch : {&profile.side_copy_left, &profile.side_copy_right, &profile.side_composite_copy}) {
+        const auto& expected = disable_side_compositing ? patch->after : patch->before;
+        check(memcmp(gd::at(patch->address), expected.storage.data(), expected.length) == 0,
+              "side-compositing option controls each guarded copy site");
     }
     // Exercise the real two pair builders on their empty-vector paths. No
     // dependency imports, model loaders or renderer are called on these paths.
@@ -551,14 +872,14 @@ static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, 
     check(VirtualAlloc(selections, 8, MEM_COMMIT, PAGE_READWRITE) != nullptr, "commit isolated saved selections");
     selections[0] = 2;
     selections[1] = 3;
-    const unsigned id = disable_live2d ? 3 : 0;
+    const unsigned id = suppress_characters ? 3 : 0;
     using PairBuilder = void(__fastcall*)(unsigned, unsigned);
     reinterpret_cast<PairBuilder>(gd::at(gd::target::get().menu_character_builder))(id, id);
     reinterpret_cast<PairBuilder>(gd::at(gd::target::get().alternate_character_builder))(id, id);
     check(menu_vector[0] == 0 && menu_vector[1] == 0 && menu_vector[2] == 0,
           "disabled menu creates no character controllers");
     check(selections[0] == 2 && selections[1] == 3, "saved character selections retained");
-    if (disable_live2d) {
+    if (suppress_characters) {
         // Run the patched inlined gameplay instruction block in a tiny harness
         // with nonzero EBX/EDI, preserving the caller's nonvolatile registers.
         std::vector<uint8_t> code{0x53, 0x57, 0xbb, 0x02, 0, 0, 0, 0xbf, 0x03, 0, 0, 0};
@@ -575,9 +896,9 @@ static int verify_image(const wchar_t* path, bool disable_live2d, unsigned fps, 
         check(reinterpret_cast<uint64_t (*)()>(stub)() == 0, "gameplay block masks both character IDs");
         VirtualFree(stub, 0, MEM_RELEASE);
     }
-    printf("PASS: DisableLive2D=%d at %u FPS; native empty-character branches, saved selections, three guarded patch "
-           "sites\n",
-           disable_live2d, fps);
+    printf("PASS: DisableLive2D=%d DisableSideCompositing=%d at %u FPS; native empty-character branches, saved "
+           "selections, %zu guarded patch sites\n",
+           disable_live2d, disable_side_compositing, fps, characters.size());
     if (fps > 60) {
         for (const auto* patch : {&gd::target::get().frame_wait, &gd::target::get().play_decrement})
             check(memcmp(gd::at(patch->address), patch->after.storage.data(), patch->after.length) == 0,
@@ -659,6 +980,15 @@ int wmain(int argc, wchar_t** argv) {
     });
     try {
         gd::self = GetModuleHandleW(nullptr);
+        if (argc == 2 && wcscmp(argv[1], L"--test-method-lookup") == 0) {
+            method_lookup_test::test();
+            puts("PASS: COM original-method lookup across misses, hooked vtables, indices and registry growth");
+            return 0;
+        }
+        if (argc == 2 && wcscmp(argv[1], L"--benchmark-method-lookup") == 0) {
+            method_lookup_test::benchmark();
+            return 0;
+        }
         if (argc == 2 && wcscmp(argv[1], L"--dump-timing-sites") == 0) {
             dump_timing_sites();
             return 0;
@@ -675,7 +1005,7 @@ int wmain(int argc, wchar_t** argv) {
             animation_clock_test();
             return 0;
         }
-        if ((argc >= 3 && argc <= 5) && wcscmp(argv[1], L"--check-config") == 0) {
+        if ((argc >= 3 && argc <= 6) && wcscmp(argv[1], L"--check-config") == 0) {
             wchar_t path[MAX_PATH];
             GetModuleFileNameW(nullptr, path, MAX_PATH);
             if (auto slash = wcsrchr(path, L'\\'))
@@ -683,26 +1013,42 @@ int wmain(int argc, wchar_t** argv) {
             wcscat_s(path, L"gd-arena-fix.ini");
             auto selected = gd::read_config(path);
             const auto expected = wcstoul(argv[2], nullptr, 10);
-            printf("Native config: %ux%u @ %u; target FPS %u; DisableLive2D=%d; NativeRendering=%d\n", selected.width,
-                   selected.height, selected.refresh, selected.fps, selected.disable_live2d, selected.native_rendering);
+            printf("Native config: %ux%u @ %u; target FPS %u; DisableLive2D=%d; NativeRendering=%d; "
+                   "DisableSideCompositing=%d\n",
+                   selected.width, selected.height, selected.refresh, selected.fps, selected.disable_live2d,
+                   selected.native_rendering, selected.disable_side_compositing);
             check(selected.refresh == expected && selected.fps == expected && gd::valid_config(selected),
                   "requested mode reaches native config reader");
             if (argc >= 4)
                 check(selected.disable_live2d == (wcstoul(argv[3], nullptr, 10) != 0),
                       "INI Live2D preference reaches native reader");
-            if (argc == 5)
+            if (argc >= 5)
                 check(selected.native_rendering == (wcstoul(argv[4], nullptr, 10) != 0),
                       "INI NativeRendering preference reaches native reader");
+            if (argc == 6)
+                check(selected.disable_side_compositing == (wcstoul(argv[5], nullptr, 10) != 0),
+                      "side-compositing preference reaches native config reader");
             puts("PASS: native INI configuration");
             return 0;
         }
         if (argc >= 3 && wcscmp(argv[1], L"--verify-image") == 0)
             return verify_image(argv[2], argc >= 4 && wcstoul(argv[3], nullptr, 10) != 0,
                                 argc >= 5 ? wcstoul(argv[4], nullptr, 10) : 120,
-                                argc >= 6 ? wcstoul(argv[5], nullptr, 10) : 2);
-        if (argc == 2 && wcscmp(argv[1], L"--native-rendering") == 0) {
+                                argc >= 6 ? wcstoul(argv[5], nullptr, 10) : 2,
+                                argc >= 7 && wcstoul(argv[6], nullptr, 10) != 0);
+        if (argc == 2 && (wcscmp(argv[1], L"--native-rendering") == 0 || wcscmp(argv[1], L"--native-direct") == 0 ||
+                          wcscmp(argv[1], L"--native-direct-copy") == 0)) {
             gd::config.native_rendering = true;
-            puts("NativeRendering smoke path enabled for this process");
+            if (wcscmp(argv[1], L"--native-direct") == 0)
+                native_smoke_effect = D3DSWAPEFFECT_FLIP;
+            else if (wcscmp(argv[1], L"--native-direct-copy") == 0)
+                native_smoke_effect = D3DSWAPEFFECT_COPY;
+            if (native_smoke_effect == D3DSWAPEFFECT_FLIP)
+                puts("NativeRendering direct-FLIP smoke path enabled for this process");
+            else if (native_smoke_effect == D3DSWAPEFFECT_COPY)
+                puts("NativeRendering direct-COPY smoke path enabled for this process");
+            else
+                puts("NativeRendering intermediate-canvas smoke path enabled for this process");
         }
         gd::FractionalTicks ticks;
         unsigned total = 0;
@@ -730,12 +1076,14 @@ int wmain(int argc, wchar_t** argv) {
         HWND window = CreateWindowExW(0, L"STATIC", L"gd-arena-fix hidden smoke test", WS_OVERLAPPEDWINDOW, 0, 0, 640,
                                       480, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         check(window != nullptr, "hidden test window");
+        const bool direct_swapchain = native_smoke_effect != D3DSWAPEFFECT_DISCARD;
+        const UINT fixture_backbuffer_count = native_smoke_effect == D3DSWAPEFFECT_FLIP ? 2 : 1;
         D3DPRESENT_PARAMETERS pp{};
         pp.BackBufferWidth = 3840;
         pp.BackBufferHeight = 2160;
         pp.BackBufferFormat = D3DFMT_X8R8G8B8;
-        pp.BackBufferCount = 1;
-        pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+        pp.BackBufferCount = fixture_backbuffer_count;
+        pp.SwapEffect = native_smoke_effect;
         pp.Windowed = TRUE;
         pp.hDeviceWindow = window;
         IDirect3DDevice9Ex* device = nullptr;
@@ -744,12 +1092,16 @@ int wmain(int argc, wchar_t** argv) {
            "hooked CreateDeviceEx");
         check_input_extent(window, true);
         scaling_test(device);
+        if (direct_swapchain)
+            direct_backbuffer_present_test(device, native_smoke_effect, fixture_backbuffer_count);
         gd::config.refresh = 120;
         check(SetWindowPos(window, nullptr, 0, 0, 3840, 2160, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) != FALSE,
               "simulate game restoring oversized window before reset");
         hr(device->ResetEx(&pp, nullptr), "hooked ResetEx");
         check_input_extent(window, true);
         scaling_test(device);
+        if (direct_swapchain)
+            direct_backbuffer_present_test(device, native_smoke_effect, fixture_backbuffer_count);
         puts("PASS: ResetEx recreates the logical canvas and restores physical input dimensions");
         auto physical = gd::physical_backbuffer();
         device->SetRenderTarget(0, physical);

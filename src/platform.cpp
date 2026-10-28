@@ -149,6 +149,18 @@ struct Table {
 };
 static std::vector<Table> tables;
 static std::mutex tables_mutex;
+// Original snapshots are immutable and remain allocated for process life. Cache
+// the last registered vtable per thread so wrapped COM hot paths avoid locking
+// and scanning `tables` after the first lookup. Only positive table hits enter
+// this cache; a vtable seen before hook_method registers it must be looked up
+// again after registration.
+struct OriginalTableCache {
+    void** address = nullptr;
+    void** original = nullptr;
+    size_t count = 0;
+};
+static thread_local OriginalTableCache original_table_cache;
+
 void hook_method(void* object, size_t count, size_t index, void* replacement) {
     std::lock_guard<std::mutex> guard(tables_mutex);
     auto current = *reinterpret_cast<void***>(object);
@@ -165,11 +177,19 @@ void hook_method(void* object, size_t count, size_t index, void* replacement) {
         throw std::runtime_error("cannot write COM method slot");
 }
 void* original_method(void* object, size_t index) {
-    std::lock_guard<std::mutex> guard(tables_mutex);
     auto current = *reinterpret_cast<void***>(object);
+    const auto& cached = original_table_cache;
+    if (cached.address == current && cached.original && index < cached.count)
+        return cached.original[index];
+
+    std::lock_guard<std::mutex> guard(tables_mutex);
     for (auto& table : tables)
-        if (table.address == current)
+        if (table.address == current) {
+            if (index >= table.count)
+                return current[index];
+            original_table_cache = {table.address, table.original.get(), table.count};
             return table.original[index];
+        }
     return current[index];
 }
 } // namespace gd
