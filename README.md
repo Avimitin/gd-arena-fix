@@ -34,12 +34,18 @@ Choose a resolution and refresh rate your display supports. Match any existing
 Windows desktop refresh rate too. Higher-rate modes still need gameplay testing.
 
 For audio setup, see the [spice2x Arena audio guide](https://github.com/spice2x/spice2x.github.io/wiki/GITADORA-Arena-Model#audio).
-With ASIO, start at **256 samples** in your audio driver's control panel; try
-**128 samples** for lower latency if playback stays clean. Increase to **512**
-if you hear crackling or dropouts, then restart the game. At 48 kHz, 128/256
-samples represent about 2.7/5.3 ms of buffer duration, not total input-to-sound
-latency. With WASAPI, start with the device defaults. These are audio-driver
-settings; high-refresh rendering does not require a particular buffer size.
+With ASIO, try **128 samples or lower** in your audio driver's control panel.
+Choose the smallest supported buffer that plays without crackling or dropouts,
+then restart the game after changing it. With WASAPI, start with the device
+defaults. High-refresh rendering does not require a particular audio buffer size.
+
+Our test environment:
+
+| Component | Configuration |
+| --- | --- |
+| CPU | Intel Core i5-12490F |
+| Audio interface | TOPPING E4x4 Pre, using the TOPPING Pro USB Audio Device ASIO driver |
+| ASIO buffer | **8 samples** |
 
 If the mod does not activate, check `gd-arena-fix.log` beside the DLL for
 unsupported settings, an unsupported game build, or a conflicting patch.
